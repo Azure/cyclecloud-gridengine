@@ -20,7 +20,7 @@ Autoscale = $Autoscale
         [[[configuration]]]
         
 
-        [[[cluster-init gridengine:default:1.0.0]]]
+        [[[cluster-init gridengine:default]]]
         Optional = true
 
     [[node master]]
@@ -30,7 +30,7 @@ Autoscale = $Autoscale
     
         [[[configuration]]]
 
-        [[[cluster-init gridengine:master:1.0.0]]]
+        [[[cluster-init gridengine:master]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $UsePublicNetwork
@@ -50,7 +50,7 @@ Autoscale = $Autoscale
 
         [[[configuration]]]
 
-        [[[cluster-init gridengine:execute:1.0.0]]]
+        [[[cluster-init gridengine:execute]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $ExecuteNodesPublic
