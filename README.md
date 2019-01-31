@@ -40,12 +40,10 @@ Processed:   1 | Transferred:   1 | Deleted:   0 | Failures:   0 | Average rate:
 ### Add UGE configs to the cluster template
 
 Make a local copy of the gridengine template and modify it to use the UGE installers
-instead of the default. Using the following command, make sure to point to the _cyclecloud_ locker for installers (the `sed` command).
-
+instead of the default.
 
 ```bash
 wget https://raw.githubusercontent.com/Azure/cyclecloud-gridengine/master/templates/gridengine.txt
-sed -i -e 's@gridengine:@cyclecloud/gridengine:@' gridengine.txt
 ```
 
 In the _gridengine.txt_ file, locate the first occurrence of `[[[configuration]]]` and
