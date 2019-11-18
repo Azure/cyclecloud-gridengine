@@ -1,0 +1,13 @@
+hostname                    <%= @nodename %>
+load_scaling                NONE
+complex_values              onsched=1,exclusive=true,slot_type=<%= @slot_type %>,placement_group=<%= @placement_group %>
+user_lists                  NONE
+xuser_lists                 NONE
+projects                    NONE
+xprojects                   NONE
+usage_scaling               NONE
+report_variables            NONE
+<% if node[:gridengine][:make]=='ge' and Gem::Version.new(node[:gridengine][:version]) >= Gem::Version.new('8.3.0')%>
+license_constraints         NONE
+license_oversubscription    NONE
+<% end -%>

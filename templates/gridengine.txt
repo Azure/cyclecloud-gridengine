@@ -12,7 +12,6 @@ Autoscale = $Autoscale
     [[node defaults]]
     UsePublicNetwork = $UsePublicNetwork
     Credentials = $Credentials    
-    ImageName = $ImageName
     SubnetId = $SubnetId
     Region = $Region
     KeyPairLocation = ~/.ssh/cyclecloud.pem
@@ -25,6 +24,7 @@ Autoscale = $Autoscale
 
     [[node master]]
     MachineType = $MasterMachineType
+    ImageName = $MasterImageName
     IsReturnProxy = $ReturnProxy
     AdditionalClusterInitSpecs = $MasterClusterInitSpecs
     
@@ -40,15 +40,36 @@ Autoscale = $Autoscale
         PublicPort = 8652
 
 
-    [[nodearray execute]]
-    MachineType = $ExecuteMachineType
-    MaxCoreCount = $MaxExecuteCoreCount
+    [[nodearray hpc]]
+    MachineType = $HPCMachineType
+    ImageName = $HPCImageName
+    MaxCoreCount = $MaxHPCCoreCount
 
-    Interruptible = $UseLowPrio
-    AdditionalClusterInitSpecs = $ExecuteClusterInitSpecs
+    Azure.MaxScalesetSize = $MaxScalesetSize
+    AdditionalClusterInitSpecs = $HPCClusterInitSpecs
 
 
         [[[configuration]]]
+        gridengine.autoscale = $Autoscale
+        gridengine.is_hpc = true
+
+        [[[cluster-init cyclecloud/gridengine:execute]]]
+
+        [[[network-interface eth0]]]
+        AssociatePublicIpAddress = $ExecuteNodesPublic
+
+
+    [[nodearray htc]]
+    MachineType = $HTCMachineType
+    ImageName = $HTCImageName
+    MaxCoreCount = $MaxHTCCoreCount
+
+    Interruptible = $UseLowPrio
+    AdditionalClusterInitSpecs = $HTCClusterInitSpecs
+
+
+        [[[configuration]]]
+        gridengine.autoscale = $Autoscale
 
         [[[cluster-init cyclecloud/gridengine:execute]]]
 
@@ -85,9 +106,16 @@ Order = 10
         ParameterType = Cloud.MachineType
         DefaultValue = Standard_D12_v2
 
-        [[[parameter ExecuteMachineType]]]
+        [[[parameter HPCMachineType]]]
         Label = Execute VM Type
-        Description = The VM type for execute nodes
+        Description = The VM type for HPC nodes
+        ParameterType = Cloud.MachineType
+        DefaultValue = Standard_F4
+        Config.Multiselect = true
+
+        [[[parameter HTCMachineType]]]
+        Label = Execute VM Type
+        Description = The VM type for HTC nodes
         ParameterType = Cloud.MachineType
         DefaultValue = Standard_F2s_v2
         Config.Multiselect = true
@@ -103,19 +131,36 @@ Order = 10
         Widget.Plugin = pico.form.BooleanCheckBox
         Widget.Label = Start and stop execute instances automatically
 
-        [[[parameter MaxExecuteCoreCount]]]
-        Label = Max Cores
-        Description = The total number of execute cores to start
+        [[[parameter MaxHTCCoreCount]]]
+        Label = Max HTC Cores
+        Description = The total number of HTC cores to start
         DefaultValue = 100
         Config.Plugin = pico.form.NumberTextBox
         Config.MinValue = 1
         Config.IntegerOnly = true
 
+        [[[parameter MaxHPCCoreCount]]]
+        Label = Max HPC Cores
+        Description = The total number of HPC cores to start
+        DefaultValue = 100
+        Config.Plugin = pico.form.NumberTextBox
+        Config.MinValue = 1
+        Config.IntegerOnly = true
+
+        [[[parameter MaxScalesetSize]]]
+        Label = Max HPC VMs in VMSS
+        Description = Max number of HPC VMs in a VMSS
+        DefaultValue = 100
+        Config.Plugin = pico.form.NumberTextBox
+        Config.MinValue = 1
+        Config.MaxValue = 1000
+        Config.IntegerOnly = true
+
         [[[parameter UseLowPrio]]]
-        Label = Low Priority
+        Label = HTC Low Priority
         DefaultValue = false
         Widget.Plugin = pico.form.BooleanCheckBox
-        Widget.Label = Use low priority instances for execute hosts
+        Widget.Label = Use low priority instances for HTC hosts
 
     [[parameters Networking]]
     Order = 40
@@ -147,8 +192,20 @@ Order = 20
     Description = "Specify the scheduling software, and base OS installed on all nodes, and optionally the cluster-init and chef versions from your Locker."
     Order = 10
 
-        [[[parameter ImageName]]]
-        Label = Base OS
+        [[[parameter MasterImageName]]]
+        Label = Master Base OS
+        ParameterType = Cloud.Image
+        Config.OS = linux
+        DefaultValue = cycle.image.centos7
+
+        [[[parameter HPCImageName]]]
+        Label = HPC Base OS
+        ParameterType = Cloud.Image
+        Config.OS = linux
+        DefaultValue = cycle.image.centos7
+
+        [[[parameter HTCImageName]]]
+        Label = HTC Base OS
         ParameterType = Cloud.Image
         Config.OS = linux
         DefaultValue = cycle.image.centos7
@@ -159,10 +216,16 @@ Order = 20
         Description = Cluster init specs to apply to the master node
         ParameterType = Cloud.ClusterInitSpecs
     
-        [[[parameter ExecuteClusterInitSpecs]]]
-        Label = Execute Cluster-Init
+        [[[parameter HPCClusterInitSpecs]]]
+        Label = HPC Cluster-Init
         DefaultValue = =undefined
-        Description = Cluster init specs to apply to execute nodes
+        Description = Cluster init specs to apply to HPC nodes
+        ParameterType = Cloud.ClusterInitSpecs
+
+        [[[parameter HTCClusterInitSpecs]]]
+        Label = HTC Cluster-Init
+        DefaultValue = =undefined
+        Description = Cluster init specs to apply to HTC nodes
         ParameterType = Cloud.ClusterInitSpecs
 	
 
