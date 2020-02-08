@@ -1,0 +1,5 @@
+suspend_method        <%= @sgeroot %>/SGESuspend.sh $job_pid $job_id $job_owner
+terminate_method      <%= @sgeroot %>/SGETerm.sh $job_pid $job_id $job_owner 90
+shell                 /bin/sh
+shell_start_mode      unix_behavior
+rerun TRUE

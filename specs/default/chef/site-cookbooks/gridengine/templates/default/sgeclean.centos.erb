@@ -1,0 +1,51 @@
+#!/bin/sh
+# chkconfig: 2356 98 01
+# description: CycleCloud.com Callbacks
+
+
+# Source function library.
+INITD=/etc/init.d
+. $INITD/functions
+
+LOCK_FILE=/var/lock/subsys/sgeclean
+mkdir -p /var/lock/subsys
+
+# Using the short hostname instead of FQDN for the file name
+# This matches the corresponding hasauth file that is created
+# as part of the node converge
+
+start() {
+    touch $LOCK_FILE
+    myhost=<%= @nodename %>
+    mydir="<%= @sgeroot %>/host_tokens/needdelete"
+    if [ -f ${mydir}/${myhost} ]; then
+      rm ${mydir}/${myhost}
+    fi
+}
+
+stop () {
+    echo -n "Requesting node removal..."
+    myhost=<%= @nodename %>
+    mydir="<%= @sgeroot %>/host_tokens/needdelete"
+    if [ -d ${mydir} ]; then
+      touch ${mydir}/${myhost}
+    fi
+
+    rm -f $LOCK_FILE
+}
+
+# See how we were called.
+case "$1" in
+  start)
+  start
+  ;;
+  stop)
+  stop
+  ;;
+  *)
+  # Print help
+  echo "Usage: sgeclean {start|stop}"
+  exit 1
+esac
+
+exit 0

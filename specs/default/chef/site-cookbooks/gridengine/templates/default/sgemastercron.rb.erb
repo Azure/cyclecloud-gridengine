@@ -1,0 +1,94 @@
+#!/usr/bin/env ruby
+
+require 'fileutils'
+
+# Only allow one copy of sgemastercron to run at a time
+File.open('/var/run/cron.sgemastercron', File::RDWR|File::CREAT, 0644) do |lockfile|
+  if lockfile.flock(File::LOCK_NB|File::LOCK_EX) != 0
+    abort('sgemastercron already running!')
+  end
+
+  if Dir.entries("<%= @sgeroot %>/host_tokens/needauth").size-2 != 0
+    Dir.foreach("<%= @sgeroot %>/host_tokens/needauth") do |fname|
+      next if fname == '.' or fname == '..'
+      `. /etc/cluster-setup.sh && qconf -ah #{fname} && qconf -as #{fname}`
+      if $? == 0
+        FileUtils.mv("<%= @sgeroot %>/host_tokens/needauth/#{fname}","<%= @sgeroot %>/host_tokens/hasauth/#{fname}")
+      else
+        # otherwise log to CycleCloud that the host was not added successfully
+        `<%= @cyclecloudhome %>/bin/jetpack log "Host #{fname} was not added successfully to GridEngine"`
+      end
+    end
+  end
+
+  if Dir.entries("<%= @sgeroot %>/host_tokens/needdelete").size-2 != 0
+    Dir.foreach("<%= @sgeroot %>/host_tokens/needdelete") do |fname|
+      next if fname == '.' or fname == '..'
+
+      # Only delete nodes that have been in a delete pending state for more than 10 minutes
+      # If a node is rebooting it will remove itself from the deleting state and this shouldn't occur
+      if (Time.new - File.open("<%= @sgeroot %>/host_tokens/needdelete/#{fname}").mtime) / 60 > 10
+        # disable the queue instances on this host and purge jobs running on it
+        `. /etc/cluster-setup.sh && qmod -d *@#{fname} ; qmod -rq *@#{fname}`
+
+        deregistrationErrors=[]
+
+        # check if node is still listed in the hostgroup
+        if system(". /etc/cluster-setup.sh && qconf -shgrp @allhosts | grep -E '#{fname}(\.|\s|$)'")
+          if !system(". /etc/cluster-setup.sh && qconf -dattr hostgroup hostlist #{fname} @allhosts")
+            deregistrationErrors.push("dattr")
+          end
+        end
+
+        # check if the node is still an exec host
+        if system(". /etc/cluster-setup.sh && qconf -sel | grep -E '#{fname}(\.|\s|$)'")
+          if !system(". /etc/cluster-setup.sh && qconf -de #{fname}")
+            deregistrationErrors.push("de")
+          end
+        end
+
+        # check if the node is still an admin host
+        if system(". /etc/cluster-setup.sh && qconf -sh | grep -E '#{fname}(\.|\s|$)'")
+          if !system(". /etc/cluster-setup.sh && qconf -dh #{fname}")
+            deregistrationErrors.push("dh")
+          end
+        end
+
+        # check if the node is still a submit host
+        if system(". /etc/cluster-setup.sh && qconf -ss | grep -E '#{fname}(\.|\s|$)'")
+          if !system(". /etc/cluster-setup.sh && qconf -ds #{fname}")
+            deregistrationErrors.push("ds")
+          end
+        end
+
+        # do not remove the token if there was an error with any of the above
+        if deregistrationErrors.empty?
+          # if everything succeeds, mark the node as deleted
+          FileUtils.rm_f("<%= @sgeroot %>/host_tokens/hasauth/#{fname}")
+          FileUtils.mv("<%= @sgeroot %>/host_tokens/needdelete/#{fname}","<%= @sgeroot %>/host_tokens/hasdelete/#{fname}")
+        else
+          # otherwise log to CycleCloud that the host was not cleaned up successfully
+          degistrationFailures = deregistrationErrors.join(",")
+          `<%= @cyclecloudhome %>/bin/jetpack log "Host #{fname} was not removed successfully from GridEngine. Error with '#{degistrationFailures}'"`
+        end
+      end
+    end
+  end
+
+  # Configure the qmaster host with slot_type and a number of slots
+  if !File.exist?("/etc/sgeqmaster.configured")
+    setupCluster = "/etc/cluster-setup.sh;"
+    setupSlotType = "qconf -mattr exechost complex_values slot_type=<%= @slot_type %> <%= @nodename %>;"
+    <% if @slots %>
+    setupSlots = "qconf -mattr queue slots <%= @slots %> all.q@<%= @nodename %>;"
+    `. #{setupCluster} #{setupSlotType} #{setupSlots}`
+    <% else %>
+    `. #{setupCluster} #{setupSlotType}`
+    <% end %>
+    if $? == 0
+      FileUtils.touch("/etc/sgeqmaster.configured")
+    end
+  end
+
+end
+
