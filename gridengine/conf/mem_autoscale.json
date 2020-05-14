@@ -1,0 +1,73 @@
+{
+  "cluster_name": "sge2f",
+  "username": "cyclecloud_access",
+  "password": "p90lIBgCjzZ8",
+  "url": "https://172.155.155.2:9444",
+  "logging": {
+    "config_file": "/opt/cycle/jetpack/system/bootstrap/gridengine/logging.conf"
+  },
+  "default_resources": [
+    {
+      "select": {},
+      "name": "slots",
+      "value": "node.vcpu_count"
+    },
+    {
+      "select": {},
+      "name": "m_mem_free",
+      "value": "node.resources.memmb"
+    },
+    {
+      "select": {},
+      "name": "mfree",
+      "value": "node.resources.m_mem_free"
+    }
+  ],
+  "gridengine": {
+    "idle_timeout": 300,
+    "relevant_complexes": [
+      "slots",
+      "slot_type",
+      "m_mem_free"
+    ],
+    "queues": {
+      "hpc.q": {
+        "constraints": [
+          {
+            "node.nodearray": "hpc"
+          }
+        ],
+        "hostlist": "NONE",
+        "pes": {
+          "mpi": {
+            "hostgroups": [
+              "@hpc.q_mpi"
+            ]
+          },
+          "mpislots": {
+            "hostgroups": [
+              "@hpc.q_mpislots"
+            ]
+          },
+          "smpslots": {
+            "hostgroups": []
+          }
+        }
+      },
+      "htc.q": {
+        "constraints": [
+          {
+            "node.nodearray": "htc"
+          }
+        ],
+        "hostlist": "@htc.q",
+        "pes": {
+          "smpslots": {
+            "hostgroups": [null]
+          }
+        }
+      }
+    }
+  },
+  "verify_certificates": false
+}
