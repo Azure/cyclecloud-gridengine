@@ -1,22 +1,13 @@
 # test: ignore
-import configparser
 import os
-import re
-from subprocess import check_call, check_output
+from subprocess import check_call
 from typing import List
 
 from setuptools import find_packages, setup
 from setuptools.command.test import Command
 from setuptools.command.test import test as TestCommand  # noqa: N812
 
-with open("src/version.py") as f:
-    _version_line = f.readlines()[0]
-    _match = re.match(r'__version__ = "(\d+\.\d+\.\d+)-SNAPSHOT"', _version_line)
-    assert _match is not None
-    __version__ = _match.group(1)
-    proj_ini = configparser.ConfigParser()
-    proj_ini.read("../project.ini")
-    assert __version__ == proj_ini["project"]["version"], "version.py does not match project.ini version"
+__version__ = "2.0.0"
 
 
 class PyTest(TestCommand):
