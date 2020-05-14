@@ -1,117 +1,448 @@
 # for backwards compatability, this is a global var instead of an argument
 # to sge_job_handler.
-import logging
-import os
 import re
-import subprocess
+from abc import ABC, abstractmethod
+from shutil import which
+from subprocess import check_output
+from typing import Any, Dict, List, Optional, Union
 
-QCONF_PATH = os.path.expanduser("~/bin/qconf")
+from hpc.autoscale import hpclogging as logging
+from hpc.autoscale import hpctypes as ht
+from hpc.autoscale.node.constraints import Constraint
+from hpc.autoscale.util import partition_single
 
-_PE_CACHE = {'make': {'pe_name': 'make', 'slots': '999', 'user_lists': 'NONE', 'xuser_lists': 'NONE', 'start_proc_args': 'NONE', 'stop_proc_args': 'NONE', 'allocation_rule': '$round_robin', 'control_slaves': 'TRUE', 'job_is_first_task': 'FALSE', 'urgency_slots': 'min', 'accounting_summary': 'TRUE'}, 'mpi': {'pe_name': 'mpi', 'slots': '999', 'user_lists': 'NONE', 'xuser_lists': 'NONE', 'start_proc_args': '/sched/sge/sge-2011.11/mpi/startmpi.sh -unique $pe_hostfile', 'stop_proc_args': '/sched/sge/sge-2011.11/mpi/stopmpi.sh', 'allocation_rule': '$fill_up', 'control_slaves': 'TRUE', 'job_is_first_task': 'FALSE', 'urgency_slots': 'min', 'accounting_summary': 'FALSE'}, 'mpislots': {'pe_name': 'mpislots', 'slots': '999', 'user_lists': 'NONE', 'xuser_lists': 'NONE', 'start_proc_args': '/bin/true', 'stop_proc_args': '/bin/true', 'allocation_rule': '$round_robin', 'control_slaves': 'TRUE', 'job_is_first_task': 'FALSE', 'urgency_slots': 'min', 'accounting_summary': 'FALSE'}, 'smpslots': {'pe_name': 'smpslots', 'slots': '999', 'user_lists': 'NONE', 'xuser_lists': 'NONE', 'start_proc_args': '/bin/true', 'stop_proc_args': '/bin/true', 'allocation_rule': '$pe_slots', 'control_slaves': 'FALSE', 'job_is_first_task': 'TRUE', 'urgency_slots': 'min', 'accounting_summary': 'FALSE'}}
+QCONF_PATH = which("qconf") or ""
 
 
-def set_pe(pe_name, pe):
+_PE_CACHE: Dict[str, "ParallelEnvironment"] = {}
+_COMPLEX_CACHE: Dict[str, "Complex"] = {}
+
+
+def set_pe(pe_name: str, pe: Union[Dict[str, str], "ParallelEnvironment"]) -> None:
     global _PE_CACHE
     if _PE_CACHE is None:
         _PE_CACHE = {}
+
+    if not isinstance(pe, ParallelEnvironment):
+        pe = ParallelEnvironment(pe)
+
     _PE_CACHE[pe_name] = pe
 
 
-def build_parellel_envs():
+def read_parallel_environments() -> Dict[str, "ParallelEnvironment"]:
     global _PE_CACHE
     if _PE_CACHE:
         return _PE_CACHE
-    
+
     parallel_envs = {}
-    
-    pe_names = subprocess.check_output([QCONF_PATH, "-spl"]).decode().splitlines()
+
+    pe_names = check_output([QCONF_PATH, "-spl"]).decode().splitlines()
     for pe_name in pe_names:
         pe_name = pe_name.strip()
-        pe = {}
+        lines = check_output([QCONF_PATH, "-sp", pe_name]).decode().splitlines(False)
+        pe = _parse_ge_config(lines)
+        parallel_envs[pe_name] = ParallelEnvironment(pe)
 
-        lines = subprocess.check_output([QCONF_PATH, "-sp", pe_name]).decode().splitlines(False)
-        for line in lines:
-            toks = re.split(r'[ \t]+', line, 1)
-            if len(toks) != 2:
-                continue
-            pe[toks[0].strip()] = toks[1].strip()
-        parallel_envs[pe_name] = pe
-    
     _PE_CACHE = parallel_envs
-    print(parallel_envs)
-    return parallel_envs
+    return _PE_CACHE
 
 
-def _use_placement_group(jetpack_config, pe_name):
-    try:
-        key = "gridengine.parallel_environment.%s.use_placement_groups" % pe_name
-        value = jetpack_config.get(key)
-        if value in [True, False]:
-            return value
-        if value is not None:
-            logging.warn("Expected a boolean for %s" % key)
-        return None
-    except:
-        return None
+def read_queue_configs(autoscale_config: Dict) -> List["GridEngineQueue"]:
+    qnames = check_output([QCONF_PATH, "-sql"]).decode().split()
+    ge_queues = []
+
+    autoscale_queues_config = autoscale_config.get("gridengine", {}).get("queues", {})
+    for qname in qnames:
+        lines = check_output([QCONF_PATH, "-sq", qname]).decode().splitlines()
+        queue_config = _parse_ge_config(lines)
+        constraints = autoscale_queues_config.get(queue_config["qname"], {}).get(
+            "constraints", []
+        )
+        ge_queues.append(GridEngineQueue(queue_config, autoscale_config, constraints))
+
+    return ge_queues
 
 
-def is_job_candidate_for_placement(job_detail, jetpack_config):
-    # not a parallel job
-    if "pe_range" not in job_detail or "max" not in job_detail["pe_range"]:
+def set_complexes(autoscale_config: Dict, complex_lines: List[str]) -> None:
+    global _COMPLEX_CACHE
+    _COMPLEX_CACHE = _parse_complexes(autoscale_config, complex_lines)
+
+
+def read_complexes(autoscale_config: Dict) -> Dict[str, "Complex"]:
+    global _COMPLEX_CACHE
+    if _COMPLEX_CACHE:
+        return _COMPLEX_CACHE
+
+    complex_lines = check_output([QCONF_PATH, "-sc"]).decode().splitlines()
+    _COMPLEX_CACHE = _parse_complexes(autoscale_config, complex_lines)
+    return _COMPLEX_CACHE
+
+
+def _parse_complexes(
+    autoscale_config: Dict, complex_lines: List[str]
+) -> Dict[str, "Complex"]:
+    relevant_complexes = None
+    if autoscale_config:
+        relevant_complexes = autoscale_config.get("gridengine", {}).get(
+            "relevant_complexes"
+        )
+        if relevant_complexes:
+            logging.info(
+                "Restricting complexes for autoscaling to %s", relevant_complexes
+            )
+
+    complexes: List[Complex] = []
+    headers = complex_lines[0].lower().replace("#", "").split()
+
+    required = set(["name", "type", "consumable"])
+    missing = required - set(headers)
+    if missing:
+        logging.error(
+            "Could not parse complex file as it is missing expected columns: %s."
+            + " Autoscale likely will not work.",
+            list(missing),
+        )
+        return {}
+
+    for n, line in enumerate(complex_lines[1:]):
+        if line.startswith("#"):
+            continue
+        toks = line.split()
+        if len(toks) != len(headers):
+            logging.warning(
+                "Could not parse complex at line {} - ignoring: '{}'".format(n, line)
+            )
+            continue
+        c = dict(zip(headers, toks))
+        try:
+            if relevant_complexes and c["name"] not in relevant_complexes:
+                logging.trace(
+                    "Ignoring complex %s because it was not defined in gridengine.relevant_complexes",
+                    c["name"],
+                )
+                continue
+
+            complex = Complex(
+                name=c["name"],
+                shortcut=c.get("shortcut", c["name"]),
+                complex_type=c["type"],
+                relop=c.get("relop", "=="),
+                requestable=c.get("requestable", "YES").lower() == "yes",
+                consumable=c.get("consumable", "YES").lower() == "yes",
+                default=c.get("default"),
+                urgency=int(c.get("urgency", 0)),
+            )
+
+            complexes.append(complex)
+
+        except Exception:
+            logging.exception("Could not parse complex %s - %s", line, c)
+
+    # TODO test RDH
+    ret = partition_single(complexes, lambda x: x.name)
+    shortcut_dict = partition_single(complexes, lambda x: x.shortcut)
+    ret.update(shortcut_dict)
+    return ret
+
+
+def _flatten_lines(lines: List[str]) -> List[str]:
+    ret = []
+    n = 0
+    while n < len(lines):
+        line = lines[n]
+        while line.endswith("\\") and n < len(lines) - 1:
+            n += 1
+            next_line = lines[n]
+            line = line[:-1] + " " + next_line.strip()
+        ret.append(line)
+        n += 1
+    return ret
+
+
+def _parse_ge_config(lines: List[str]) -> Dict[str, str]:
+    config = {}
+
+    for line in _flatten_lines(lines):
+        toks = re.split(r"[ \t]+", line, 1)
+        if len(toks) != 2:
+            continue
+        config[toks[0].strip()] = toks[1].strip()
+
+    return config
+
+
+class GridEngineQueue:
+    def __init__(
+        self,
+        queue_config: Dict[str, str],
+        autoscale_config: Dict[str, str],
+        constraints: List[Constraint],
+    ) -> None:
+        self.queue_config = queue_config
+        if isinstance(constraints, dict):
+            constraints = [constraints]
+
+        if not isinstance(constraints, list):
+            logging.error(
+                "Ignoring invalid constraints for queue %s! %s", self.qname, constraints
+            )
+            constraints = [{"node.nodearray": self.qname}]
+
+        self.constraints = constraints
+        self.__hostlist = self.queue_config["hostlist"].split(",")
+        self.__pe_to_hostgroups: Dict[str, List[str]] = {}
+        self.__complexes = read_complexes(autoscale_config)
+        self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
+        all_pes = read_parallel_environments()
+
+        for tok in re.split(r"[ \t,]+", queue_config["pe_list"]):
+
+            tok = tok.strip()
+
+            if tok == "NONE":
+                continue
+
+            pe_name: str
+            hostgroups: List[str]
+
+            if not tok.startswith("["):
+                pe_name = tok
+                hostgroups = [x for x in self.__hostlist if x.startswith("@")]
+            else:
+                tok = tok[1:-1].strip()
+                hostgroup, pe_name = tok.split("=", 1)
+                hostgroups = [hostgroup]
+
+            assert pe_name not in self.__pe_to_hostgroups
+            self.__pe_to_hostgroups[pe_name] = hostgroups
+            self.__parallel_environments[pe_name] = all_pes[pe_name]
+
+    @property
+    def qname(self) -> str:
+        return self.queue_config["qname"]
+
+    @property
+    def hostlist(self) -> List[str]:
+        return self.__hostlist
+
+    @property
+    def hostlist_groups(self) -> List[str]:
+        return [x for x in self.hostlist if x.startswith("@")]
+
+    @property
+    def complexes(self) -> Dict[str, "Complex"]:
+        return self.__complexes
+
+    def has_pe(self, pe_name: str) -> bool:
+        return pe_name in self.__parallel_environments
+
+    def get_pe(self, pe_name: str) -> "ParallelEnvironment":
+        if not self.has_pe(pe_name):
+            raise RuntimeError(
+                "Queue {} does not support parallel_environment {}".format(
+                    self.qname, pe_name
+                )
+            )
+        return self.__parallel_environments[pe_name]
+
+    def get_hostgroups_for_pe(self, pe_name: str) -> List[str]:
+        if not self.has_pe(pe_name):
+            raise RuntimeError(
+                "Queue {} does not support parallel_environment {}".format(
+                    self.qname, pe_name
+                )
+            )
+
+        return self.__pe_to_hostgroups[pe_name]
+
+
+class ParallelEnvironment:
+    def __init__(self, config: Dict[str, str]):
+        self.config = config
+        self.__allocation_rule = AllocationRule.value_of(config["allocation_rule"])
+
+    @property
+    def name(self) -> str:
+        return self.config["pe_name"]
+
+    @property
+    def slots(self) -> int:
+        return int(self.config["slots"])
+
+    @property
+    def allocation_rule(self) -> "AllocationRule":
+        return self.__allocation_rule
+
+    @property
+    def requires_placement_groups(self) -> bool:
+        return self.allocation_rule.requires_placement_groups
+
+    @property
+    def is_fixed(self) -> bool:
+        return self.allocation_rule.is_fixed
+
+
+class AllocationRule(ABC):
+    def __init__(self, name: str) -> None:
+        self.__name = name
+
+    @property
+    @abstractmethod
+    def requires_placement_groups(self) -> bool:
+        ...
+
+    @property
+    def name(self) -> str:
+        return self.__name
+
+    @property
+    def is_fixed(self) -> bool:
         return False
 
-    pe_name = job_detail.get("pe")
-    # likely impossible this is ever undefined if pe_range is defined.
-    if not pe_name:
-        return False
-    
-    pe = build_parellel_envs().get(pe_name)
-    if not pe:
-        logging.error("Unknown parallel environment %s" % pe_name)
-        # TODO should raise an exception that says skip this job
-        return False
-    
-    allocation_rule = pe.get("allocation_rule")
-
-    if allocation_rule == "$pe_slots":
-        # I don't care what the user said, this job will only run on one machine
-        return False
-    
-    user_defined_default = _use_placement_group(jetpack_config, "default")
-    user_defined_pe = _use_placement_group(jetpack_config, pe_name)
-    
-    if user_defined_pe is not None:
-        return user_defined_pe
-    
-    if user_defined_default is not None:
-        return user_defined_default
-    
-    return True
+    @staticmethod
+    def value_of(allocation_rule: str) -> "AllocationRule":
+        if allocation_rule == "$fill_up":
+            return FillUp()
+        elif allocation_rule == "$round_robin":
+            return RoundRobin()
+        elif allocation_rule == "$pe_slots":
+            return PESlots()
+        elif allocation_rule.isdigit():
+            return FixedProcesses(allocation_rule)
+        else:
+            raise RuntimeError("Unknown allocation rule {}".format(allocation_rule))
 
 
-def derive_default(pe, parallel_environments):
-    '''
-    We aren't actually calling this function, but the logic is reasonable for 
-    figuring out whether or not these jobs require placement groups so I
-    am leaving it here in case we change our mind.
-    '''
-    allocation_rule = parallel_environments[pe].get("allocation_rule")
-    
-    # not sure this can ever be undefined.
-    if not allocation_rule:
-        return False
-    
-    # $pe_slots means the entire process has to run on one machine
-    # $fill_up means what it sounds like, fill up a host and
-    # keep spilling over to the next host until it is satisfied.
-    if allocation_rule in ["$fill_up", "$pe_slots"]:
-        return False
-       
-    # all that is left is $round_robin or an integer of 1-pe_slots
-    if allocation_rule == "$round_robin":
+class FillUp(AllocationRule):
+    def __init__(self) -> None:
+        super().__init__("$fill_up")
+
+    @property
+    def requires_placement_groups(self) -> bool:
         return True
-    try:
-        return int(allocation_rule) > 0
-    except ValueError:
-        logging.warn("Don't know how to handle allocation_rule %s. Assuming this is not an MPI like job." % allocation_rule)
+
+
+class RoundRobin(AllocationRule):
+    def __init__(self) -> None:
+        super().__init__("$round_robin")
+
+    @property
+    def requires_placement_groups(self) -> bool:
+        return True
+
+
+class PESlots(AllocationRule):
+    def __init__(self) -> None:
+        super().__init__("$pe_slots")
+
+    @property
+    def requires_placement_groups(self) -> bool:
         return False
+
+
+class FixedProcesses(AllocationRule):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.__fixed_processes = int(name)
+
+    @property
+    def requires_placement_groups(self) -> bool:
+        return False
+
+    @property
+    def is_fixed(self) -> bool:
+        return True
+
+    @property
+    def fixed_processes(self) -> int:
+        return self.__fixed_processes
+
+
+class Complex:
+    def __init__(
+        self,
+        name: str,
+        shortcut: str,
+        complex_type: str,
+        relop: str,
+        requestable: bool,
+        consumable: bool,
+        default: Optional[str],
+        urgency: int,
+    ) -> None:
+        self.name = name
+        self.shortcut = shortcut
+        self.complex_type = complex_type.upper()
+        self.relop = relop
+        self.requestable = requestable
+        self.consumable = consumable
+        self.urgency = urgency
+        self.__logged_type_warning = False
+        self.__logged_parse_warning = False
+
+        self.default = self.parse(default or "NONE")
+
+    def parse(self, value: str) -> Optional[Any]:
+        try:
+            if value.upper() == "NONE":
+                return None
+            if value.lower() == "infinity":
+                return float("inf")
+
+            if self.complex_type in ["INT", "RSMAP"]:
+                return int(value)
+
+            elif self.complex_type == "BOOL":
+                return bool(float(value))
+
+            elif self.complex_type == "DOUBLE":
+                return float(value)
+
+            elif self.complex_type in ["RESTRING", "TIME", "STRING", "HOST"]:
+                return value
+
+            elif self.complex_type == "CSTRING":
+                # TODO test
+                return value.lower()  # case insensitve - we will just always lc
+
+            elif self.complex_type == "MEMORY":
+                size = value[-1]
+                if size.isdigit():
+                    mem = ht.Memory(float(value), "b")
+                else:
+                    mem = ht.Memory(float(value[:-1]), size)
+                return mem.convert_to("m").value
+            else:
+                if not self.__logged_type_warning:
+                    logging.warning(
+                        "Unknown complex type %s - treating as string.",
+                        self.complex_type,
+                    )
+                    self.__logged_type_warning = True
+                return value
+        except Exception:
+            if not self.__logged_parse_warning:
+                logging.warning(
+                    "Could not parse complex %s with value '%s'. Treating as string",
+                    self,
+                    value,
+                )
+                self.__logged_parse_warning = True
+            return value
+
+    def __str__(self) -> str:
+        return "Complex(name={}, shortcut={}, type={}, default={})".format(
+            self.name, self.shortcut, self.complex_type, self.default
+        )
+
+    def __repr__(self) -> str:
+        return "Complex(name={}, shortcut={}, type={}, relop='{}', requestable={}, consumable={}, default={}, urgency={})".format(
+            self.name,
+            self.shortcut,
+            self.complex_type,
+            self.relop,
+            self.requestable,
+            self.consumable,
+            self.default,
+            self.urgency,
+        )

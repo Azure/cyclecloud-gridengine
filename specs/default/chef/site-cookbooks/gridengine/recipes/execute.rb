@@ -106,7 +106,7 @@ placement_group = node[:cyclecloud][:node][:placement_group_id] || "default"
 
 # in high node churn envs with reused hostnames, gridengine isn't re-enabling queues
 execute "gridengine_enable_host" do
-    command lazy { ". /etc/cluster-setup.sh && qmod -e *@#{node[:hostname]} && touch /etc/gridengineexecd.enabled"}
+    command lazy { ". /etc/cluster-setup.sh && qmod -e *@$(hostname) && touch /etc/gridengineexecd.enabled"}
     creates "/etc/gridengineexecd.enabled"
     action :nothing
 end
@@ -118,11 +118,11 @@ service 'gridengineexecd' do
 end
 
 execute "configure_slot_attributes" do
-  set_slot_type = lambda { "qconf -mattr exechost complex_values slot_type=#{slot_type} #{node[:hostname]}" }
+  set_slot_type = lambda { "qconf -mattr exechost complex_values slot_type=#{slot_type} $(hostname)" }
   
   set_slot_count = lambda { "true" }  # No-Op
   if node[:gridengine][:slots]
-    set_slot_count = lambda { "qconf -mattr queue slots #{node[:gridengine][:slots]} all.q@#{node[:hostname]}" }
+    set_slot_count = lambda { "qconf -mattr queue slots #{node[:gridengine][:slots]} all.q@$(hostname) && " }
   end
   
   is_node_grouped = node[:cyclecloud][:node]["placement_group_id"].nil?
@@ -133,11 +133,14 @@ execute "configure_slot_attributes" do
 
   if is_node_grouped
     # grouped/mpi jobs are exclusive
-    set_node_exclusivity = lambda { "qconf -mattr exechost complex_values exclusive=true #{node[:hostname]}" }
-    set_placement_group = lambda { "qconf -mattr exechost complex_values placement_group=#{placement_group} #{node[:hostname]}" }
+    set_node_exclusivity = lambda { "qconf -mattr exechost complex_values exclusive=1 $(hostname)" }
+    set_placement_group = lambda { "qconf -mattr exechost complex_values placement_group=#{placement_group} $(hostname)" }
   end
 
-  set_nodearray = lambda { "qconf -mattr exechost complex_values nodearray=#{node[:cyclecloud][:node][:template]} #{node[:hostname]}"}
+  set_nodearray = lambda { "qconf -mattr exechost complex_values nodearray=#{node[:cyclecloud][:node][:template]} $(hostname)"}
+  
+  memory = node[:memory][:total].sub("B", "")  # ends with kB, we want just k
+  set_h_mem_free = lambda { "qconf -mattr exechost complex_values m_mem_free=#{memory} $(hostname)" }
 
   command lazy {
     <<-EOS
@@ -145,7 +148,9 @@ execute "configure_slot_attributes" do
       #{set_slot_type.call} && \
       #{set_placement_group.call} && \
       #{set_node_exclusivity.call} && \
+      #{set_nodearray.call} && \
       #{set_slot_count.call} && \
+      #{set_h_mem_free.call} && \
       touch /etc/gridengineexecd.configured
     EOS
   }

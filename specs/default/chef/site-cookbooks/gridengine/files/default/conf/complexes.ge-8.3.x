@@ -59,7 +59,7 @@ np_load_medium          nlm           DOUBLE      >=      NO          NO        
 np_load_short           nls           DOUBLE      >=      NO          NO         0        0       NO
 num_proc                p             INT         ==      YES         NO         0        0       NO
 onsched                 os            BOOL        ==      YES         NO         0        0       NO
-placement_group         group         RESTRING    ==      FORCED      NO         NONE     0       NO
+placement_group         group         RESTRING    ==      YES         NO         NONE     0       NO
 placement_group_cores   group_size    INT         ==      YES         NO         0        0       NO
 qname                   q             RESTRING    ==      YES         NO         NONE     0       NO
 rerun                   re            BOOL        ==      NO          NO         0        0       NO
@@ -72,7 +72,7 @@ s_rt                    s_rt          TIME        <=      YES         NO        
 s_stack                 s_stack       MEMORY      <=      YES         NO         0        0       NO
 s_vmem                  s_vmem        MEMORY      <=      YES         NO         0        0       NO
 seq_no                  seq           INT         ==      NO          NO         0        0       NO
-slot_type               slot_type     RESTRING    ==      FORCED      NO         NONE     0       NO
+slot_type               slot_type     RESTRING    ==      YES         NO         NONE     0       NO
 slots                   s             INT         <=      YES         YES        1        1000    YES
 swap_free               sf            MEMORY      <=      YES         NO         0        0       NO
 swap_rate               sr            MEMORY      >=      YES         NO         0        0       NO

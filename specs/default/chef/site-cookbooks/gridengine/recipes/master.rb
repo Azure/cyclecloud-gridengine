@@ -7,7 +7,7 @@
 
 chefstate = node[:cyclecloud][:chefstate]
 
-#directory "#{node[:cyclecloud][:bootstrap]}/gridengine"
+directory "#{node[:cyclecloud][:bootstrap]}/gridengine"
 
 slot_type = node[:gridengine][:slot_type] || "master"
 
@@ -27,8 +27,12 @@ when 'ubuntu'
     package_name 'libnuma-dev'
   end
 when 'centos'
+  # Install EPEL for jemalloc
+  package 'epel-release'
+
+  # jemalloc depends on EPEL
   package 'Install jemalloc' do
-  package_name 'jemalloc'
+      package_name 'jemalloc'
   end
 end
 
@@ -47,15 +51,6 @@ user node[:gridengine][:user][:name] do
   not_if "getent passwd #{node[:gridengine][:user][:name]}"
 end
 
-# TODO maybe need to do this?
-# directory "/sched/sge" do
-#   owner node[:gridengine][:user][:name]
-#   group node[:gridengine][:group][:name]
-#   mode "0755"
-#   action :create
-#   recursive true
-#   only_if "test -d /sched"
-# end
 
 nodename = node[:cyclecloud][:instance][:hostname]
 
@@ -250,78 +245,24 @@ template "#{gridengineroot}/conf/mpislots" do
 end
 
 
-remote_directory "#{node[:cyclecloud][:bootstrap]}/gridengine" do
-  source "src"
-  owner 'root'
-  group 'root'
-  mode '0700'
-  action :create
-  # not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/gridengine")}
-end
-
-
-cookbook_file "#{node[:cyclecloud][:bootstrap]}/gridengine/setup.py" do
-  source 'setup.py'
-  owner 'root'
-  group 'root'
-  mode '0700'
-  action :create
-  # not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/setup.py")}
-end
-
-
-package 'python3' do
-  action :install
-end
-
-bash 'setup virtualenv' do
-  code <<-EOH
-  set -e
-  python3 -m pip install virtualenv
-  python3 -m virtualenv #{node[:cyclecloud][:bootstrap]}/gridenginevenv
-  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
-  
-  jetpack download cyclecloud-api.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-  jetpack download autoscale-7.9.5.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-  
-  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-api.tar.gz
-  pip install #{node[:cyclecloud][:bootstrap]}/autoscale-7.9.5.tar.gz
-  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
-  EOH
-  action :run
-  # if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridengine/setup.py")}
-  # not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
-end
-
-
 autoscale_config = {
   :cluster_name => node[:cyclecloud][:cluster][:name],
   :username => node[:cyclecloud][:config][:username],
   :password => node[:cyclecloud][:config][:password],
   :url => node[:cyclecloud][:config][:web_server],
   :logging => {:config_file => "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf"},
-  :default_resources => [ { :select => {}, :name => "slots", :value => "node.vcpu_count"} ]
+  :default_resources => [ { :select => {}, :name => "slots", :value => "node.vcpu_count"} ],
+  :gridengine => {:queues => { },
+                  :idle_timeout => node[:gridengine][:idle_timeout]}
 }
 
-file "#{node[:cyclecloud][:bootstrap]}/gridengine/gridengine_autoscale.sh" do
-  content <<-EOF#!/bin/env bash
-  set -e
-  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
-  PYTHONPATH=$PYTHONPATH:#{node[:cyclecloud][:bootstrap]}/gridengine python -m gridengine.autoscaler -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
-  EOF
-  owner "root"
-  group "root"
-  mode "0755"
-  action :create
-end
-
-
-file "#{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json" do
+# need this to allow us to call amend_queue_config
+file "#{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json" do
   mode "0644"
   owner "root"
   group "root"
   content Chef::JSONCompat.to_json_pretty(autoscale_config)
-  not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json")}
+  not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json")}
 end
 
 
@@ -335,10 +276,49 @@ cookbook_file "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf" do
 end
 
 
-
-cron "modify jobs" do
-  command "#{node[:cyclecloud][:bootstrap]}/cron_wrapper.sh #{node[:cyclecloud][:bootstrap]}/gridengine/src/modify_jobs.py >> #{node[:cyclecloud][:bootstrap]}/gridengine/modify_jobs.out 2>&1"
+package 'python3' do
+  action :install
+  
 end
+
+bash 'setup virtualenv' do
+  code <<-EOH
+  set -e
+  source /etc/profile.d/sgesettings.sh
+  python3 -m pip install virtualenv
+  python3 -m virtualenv #{node[:cyclecloud][:bootstrap]}/gridenginevenv
+  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
+  
+  jetpack download cyclecloud-api.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+  jetpack download autoscale-0.1.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+  jetpack download cyclecloud-gridengine-2.0.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+  
+  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-api.tar.gz
+  pip install #{node[:cyclecloud][:bootstrap]}/autoscale-0.1.0.tar.gz
+  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-gridengine-2.0.0.tar.gz
+  # takes the bootstrap config and amends relevant info so that the next step can properly create our queues.
+  python -m gridengine.cli amend_queue_config -c #{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json > #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
+  python -m gridengine.cli create_queues -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
+  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
+  EOH
+  action :run
+  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
+end
+
+
+file "#{node[:cyclecloud][:bootstrap]}/gridengine/gridengine_autoscale.sh" do
+  content <<-EOF#!/bin/env bash
+  set -e
+  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
+  # -c is not required here, leaving so it is obvious what config is used when debugging
+  python -m gridengine.cli autoscale -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
+  EOF
+  owner "root"
+  group "root"
+  mode "0755"
+  action :create
+end
+
 
 template "#{gridengineroot}/conf/mpi" do
   source "mpi.erb"

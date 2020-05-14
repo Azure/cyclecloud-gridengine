@@ -1,7 +1,9 @@
 default[:gridengine][:make] = "sge"
 default[:gridengine][:version] = "2011.11"
-default[:gridengine][:root] = "/opt/gridengine/sge-2011.11"
+default[:gridengine][:root] = "/sched/sge/sge-2011.11"
 default[:gridengine][:package_extension] = "tar.gz"
+
+default[:gridengine][:idle_timeout] = 300
 
 default[:gridengine][:shared][:bin] = true
 default[:gridengine][:shared][:spool] = true
