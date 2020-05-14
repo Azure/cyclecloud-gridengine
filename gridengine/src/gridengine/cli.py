@@ -150,7 +150,6 @@ def _hostgroup_to_pes(
                 hostgroups = [None]
 
             for hg in hostgroups:
-                assert hg.startswith("@")
                 if hg not in hostgroup_to_pes[queue_name]:
                     hostgroup_to_pes[queue_name][hg] = []
                 hostgroup_to_pes[queue_name][hg].append(pe_name)
