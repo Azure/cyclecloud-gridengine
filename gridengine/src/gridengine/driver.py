@@ -191,7 +191,8 @@ class GridEngineDriver:
         3) qconf -ah #{fname} && qconf -as #{fname}
         """
 
-        self.handle_undraining(matched_nodes)
+        # TODO rethink this RDH
+        # self.handle_undraining(matched_nodes)
 
         _hostlist_cache: Dict[str, List[str]] = {}
 
