@@ -176,7 +176,7 @@ class GridEngineDriver:
             if node.hostname:
                 wc_queue_list_expr = "*@{}".format(node.hostname)
                 try:
-                    check_call([QMOD_PATH, "-r", wc_queue_list_expr])
+                    check_call([QMOD_PATH, "-e", wc_queue_list_expr])
                     undrained.append(node)
                 except CalledProcessError as e:
                     logging.error(
