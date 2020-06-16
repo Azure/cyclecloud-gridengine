@@ -32,9 +32,14 @@ def autoscale_grid_engine(
 
     logging.debug("Driver = %s", ge_driver)
 
-    invalid_nodes = [
-        n for n in ge_driver.scheduler_nodes if n.metadata.get("state") == "au"
-    ]
+    invalid_nodes = []
+
+    for node in ge_driver.scheduler_nodes:
+        # many combinations of a u and other states. However,
+        # as long as a and u are in there it is down
+        state = node.metadata.get("state", "")
+        if "a" in state and "u" in state:
+            invalid_nodes.append(node)
 
     ge_driver.clean_hosts(invalid_nodes)
 
@@ -44,6 +49,7 @@ def autoscale_grid_engine(
 
     if ctx_handler:
         ctx_handler.set_context("[joining]")
+
     # details here are that we pass in nodes that matter (matched) and the driver figures out
     # which ones are new and need to be added via qconf
     ge_driver.handle_join_cluster([x for x in demand_result.compute_nodes if x.exists])
