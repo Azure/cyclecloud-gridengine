@@ -3,13 +3,14 @@
 import re
 from abc import ABC, abstractmethod
 from shutil import which
-from subprocess import check_output
 from typing import Any, Dict, List, Optional, Union
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
 from hpc.autoscale.node.constraints import Constraint
 from hpc.autoscale.util import partition_single
+
+from gridengine.util import check_output
 
 QCONF_PATH = which("qconf") or ""
 
@@ -29,7 +30,7 @@ def set_pe(pe_name: str, pe: Union[Dict[str, str], "ParallelEnvironment"]) -> No
     _PE_CACHE[pe_name] = pe
 
 
-def read_parallel_environments() -> Dict[str, "ParallelEnvironment"]:
+def read_parallel_environments(autoscale_config: Dict) -> Dict[str, "ParallelEnvironment"]:
     global _PE_CACHE
     if _PE_CACHE:
         return _PE_CACHE
@@ -41,6 +42,7 @@ def read_parallel_environments() -> Dict[str, "ParallelEnvironment"]:
         pe_name = pe_name.strip()
         lines = check_output([QCONF_PATH, "-sp", pe_name]).decode().splitlines(False)
         pe = _parse_ge_config(lines)
+
         parallel_envs[pe_name] = ParallelEnvironment(pe)
 
     _PE_CACHE = parallel_envs
@@ -50,15 +52,17 @@ def read_parallel_environments() -> Dict[str, "ParallelEnvironment"]:
 def read_queue_configs(autoscale_config: Dict) -> List["GridEngineQueue"]:
     qnames = check_output([QCONF_PATH, "-sql"]).decode().split()
     ge_queues = []
-
+    logging.info("Found %d queues: %s", len(qnames), " ".join(qnames))
     autoscale_queues_config = autoscale_config.get("gridengine", {}).get("queues", {})
     for qname in qnames:
         lines = check_output([QCONF_PATH, "-sq", qname]).decode().splitlines()
         queue_config = _parse_ge_config(lines)
-        constraints = autoscale_queues_config.get(queue_config["qname"], {}).get(
+        queue_constraints = autoscale_queues_config.get(queue_config["qname"], {}).get(
             "constraints", []
         )
-        ge_queues.append(GridEngineQueue(queue_config, autoscale_config, constraints))
+        ge_queues.append(
+            GridEngineQueue(queue_config, autoscale_config, queue_constraints)
+        )
 
     return ge_queues
 
@@ -193,7 +197,17 @@ class GridEngineQueue:
         self.__pe_to_hostgroups: Dict[str, List[str]] = {}
         self.__complexes = read_complexes(autoscale_config)
         self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
-        all_pes = read_parallel_environments()
+        all_pes = read_parallel_environments(autoscale_config)
+        self.__slots = {}
+
+        for tok in self.queue_config["slots"].split(","):
+            if "[" not in tok:
+                continue
+            tok = tok.replace("[", "").replace("]", "")
+            fqdn, slot_str = tok.split("=")
+            slot = int(slot_str.strip())
+            hostname = fqdn.strip().lower().split(".")[0]
+            self.__slots[ht.Hostname(hostname)] = slot
 
         for tok in re.split(r"[ \t,]+", queue_config["pe_list"]):
 
@@ -230,6 +244,10 @@ class GridEngineQueue:
         return [x for x in self.hostlist if x.startswith("@")]
 
     @property
+    def slots(self) -> Dict[ht.Hostname, int]:
+        return self.__slots
+
+    @property
     def complexes(self) -> Dict[str, "Complex"]:
         return self.__complexes
 
@@ -254,6 +272,14 @@ class GridEngineQueue:
             )
 
         return self.__pe_to_hostgroups[pe_name]
+
+    def __str__(self) -> str:
+        return "GridEnineQueue(qname={}, pes={}, hostlist={})".format(
+            self.qname, list(self.__parallel_environments.keys()), self.hostlist
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 class ParallelEnvironment:
@@ -347,7 +373,7 @@ class FixedProcesses(AllocationRule):
 
     @property
     def requires_placement_groups(self) -> bool:
-        return False
+        return True
 
     @property
     def is_fixed(self) -> bool:

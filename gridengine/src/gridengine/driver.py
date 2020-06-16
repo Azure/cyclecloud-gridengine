@@ -1,11 +1,7 @@
 import math
-import os
 import re
 import socket
-from shutil import which
 from subprocess import CalledProcessError
-from subprocess import check_call as _check_call
-from subprocess import check_output as _check_output
 from typing import Any, Dict, List, Optional, Set, Tuple
 from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
@@ -13,14 +9,16 @@ from xml.etree.ElementTree import Element
 import six
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
-from hpc.autoscale.job.computenode import SchedulerNode
+from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.job.job import Job
+from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.constraints import (
     BaseNodeConstraint,
     NodeConstraint,
     register_parser,
 )
 from hpc.autoscale.node.node import Node
+from hpc.autoscale.node.nodemanager import NodeManager
 from hpc.autoscale.results import SatisfiedResult
 from hpc.autoscale.util import partition, partition_single
 
@@ -31,51 +29,26 @@ from gridengine.parallel_environments import (
     ParallelEnvironment,
     read_parallel_environments,
 )
-
-QSTAT_PATH = which("qstat") or ""
-QCONF_PATH = which("qconf") or ""
-QMOD_PATH = which("qmod") or ""
-if not QSTAT_PATH:
-    logging.error("Could not find qstat in PATH: {}".format(os.environ))
-if not QCONF_PATH:
-    logging.error("Could not find qstat in PATH: {}".format(os.environ))
-
-
-DISABLED_RESOURCE_GROUP = "limitcycleclouddisabled"
-DISABLED_HOST_GROUP = "@cycleclouddisabled"
-
-
-def check_call(cmd: List[str], *args: Any, **kwargs: Any) -> None:
-    logging.trace("Running '%s'", " ".join(cmd))
-    try:
-        _check_call(cmd, *args, **kwargs)
-    except Exception:
-        logging.error("'%s'", " ".join(cmd))
-        raise
-
-
-def call(cmd: List[str], *args: Any, **kwargs: Any) -> None:
-    try:
-        check_call(cmd, *args, **kwargs)
-    except CalledProcessError as e:
-        logging.warning("Previous command failed: %s", str(e))
-
-
-def check_output(cmd: List[str], *args: Any, **kwargs: Any) -> Any:
-    logging.trace("Running '%s'", " ".join(cmd))
-    try:
-        return _check_output(cmd, *args, **kwargs)
-    except Exception:
-        logging.error("'%s'", " ".join(cmd))
-        raise
+from gridengine.util import (
+    QCONF_PATH,
+    QMOD_PATH,
+    QSTAT_PATH,
+    call,
+    check_call,
+    check_output,
+)
 
 
 class GridEngineDriver:
     def __init__(self, autoscale_config: Dict) -> None:
-        jobs, scheduler_nodes = _get_jobs_and_nodes(autoscale_config)
+        self.autoscale_config = autoscale_config
+        jobs, scheduler_nodes = self.get_jobs_and_nodes()
         self.jobs = jobs
         self.scheduler_nodes = scheduler_nodes
-        self.parallel_envs = read_parallel_environments()
+        self.parallel_envs = read_parallel_environments(autoscale_config)
+
+    def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
+        return _get_jobs_and_nodes(self.autoscale_config)
 
     def handle_draining(
         self, unmatched_nodes: List[SchedulerNode]
@@ -101,6 +74,8 @@ class GridEngineDriver:
         return to_shutdown
 
     def handle_post_delete(self, nodes_to_delete: List[Node]) -> None:
+        logging.getLogger("gridengine.driver").info("handle_post_delete")
+
         fqdns = check_output([QCONF_PATH, "-sh"]).decode().lower().split()
         admin_hosts = [n.split(".")[0] for n in fqdns]
 
@@ -125,8 +100,13 @@ class GridEngineDriver:
 
         by_queue = partition(
             nodes_to_delete,
-            lambda n: n.resources.get("slot_type") or n.nodearray + ".q",
+            lambda n: (n.resources.get("slot_type") or n.nodearray) + ".q",
         )
+
+        queue_configs_list = parallel_environments.read_queue_configs(
+            self.autoscale_config
+        )
+        queue_configs = partition_single(queue_configs_list, lambda q: q.qname)
 
         for queue_name, nodes in by_queue.items():
             if queue_name in queues:
@@ -137,14 +117,16 @@ class GridEngineDriver:
                 if not node.hostname:
                     continue
 
+                hostname = node.hostname.lower()
+
                 try:
                     logging.info(
-                        "Removing host %s via qconf -dh and -ds", node.hostname
+                        "Removing host %s via qconf -dh, -de and -ds", hostname
                     )
                     # we need to remove these from the hostgroups first, otherwise
                     # we can't remove the node
                     for hostlist_name, hosts in by_hostlist.items():
-                        if node.hostname.lower() in hosts:
+                        if hostname in hosts:
                             call(
                                 [
                                     QCONF_PATH,
@@ -156,13 +138,31 @@ class GridEngineDriver:
                                 ]
                             )
 
-                    if node.hostname.lower() in admin_hosts:
+                    queue_config = queue_configs[queue_name]
+
+                    if hostname in queue_config.slots:
+                        queue_host = "{}@{}".format(queue_name, hostname)
+                        slots = queue_config.slots[hostname]
+
+                        call(
+                            [
+                                QCONF_PATH,
+                                "-dattr",
+                                "queue",
+                                "slots",
+                                str(slots),
+                                queue_host,
+                            ]
+                        )
+
+                    if hostname in admin_hosts:
                         call([QCONF_PATH, "-dh", node.hostname])
 
-                    if node.hostname.lower() in submit_hosts:
+                    if hostname in submit_hosts:
                         call([QCONF_PATH, "-ds", node.hostname])
 
-                    if node.hostname.lower() in exec_hosts:
+                    if hostname in exec_hosts:
+                        logging.warning("%s not in %s", hostname, exec_hosts)
                         call([QCONF_PATH, "-de", node.hostname])
 
                 except CalledProcessError as e:
@@ -170,6 +170,7 @@ class GridEngineDriver:
 
     def handle_undraining(self, matched_nodes: List[Node]) -> List[Node]:
         # TODO get list of hosts in @disabled
+        logging.getLogger("gridengine.driver").info("handle_undraining")
 
         undrained: List[SchedulerNode] = []
         for node in matched_nodes:
@@ -184,32 +185,32 @@ class GridEngineDriver:
                     )
         return undrained
 
-    def handle_join_cluster(self, matched_nodes: List[Node]) -> None:
+    def handle_join_cluster(self, matched_nodes: List[Node]) -> List[Node]:
         """
-        1) remove the host from @disabled
-        2) create compnode.conf
-        3) qconf -ah #{fname} && qconf -as #{fname}
         """
+        logging.getLogger("gridengine.driver").info("handle_join_cluster")
 
         # TODO rethink this RDH
         # self.handle_undraining(matched_nodes)
 
-        _hostlist_cache: Dict[str, List[str]] = {}
+        _hostgroup_cache: Dict[str, List[str]] = {}
 
-        def _get_hostlist(hostlist: str) -> List[str]:
-            if hostlist not in _hostlist_cache:
+        def _get_hostlist(hostgroup: str) -> List[str]:
+            if hostgroup not in _hostgroup_cache:
                 fqdns = (
-                    check_output([QCONF_PATH, "-shgrp_resolved", hostlist])
+                    check_output([QCONF_PATH, "-shgrp_resolved", hostgroup])
                     .decode()
+                    .lower()
                     .split()
                 )
-                _hostlist_cache[hostlist] = [fqdn.split(".")[0] for fqdn in fqdns]
-            return _hostlist_cache[hostlist]
+                _hostgroup_cache[hostgroup] = [fqdn.split(".")[0] for fqdn in fqdns]
+            return _hostgroup_cache[hostgroup]
 
-        for node in matched_nodes:
-            if not self.add_node_to_cluster(node):
-                continue
+        joined_nodes = self.add_nodes_to_cluster(matched_nodes)
 
+        completed_nodes = []
+
+        for node in joined_nodes:
             hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
             if not hostgroups_expr:
                 logging.warning(
@@ -223,31 +224,66 @@ class GridEngineDriver:
             hostgroups = hostgroups_expr.split(" ")
 
             for hostgroup in hostgroups:
+                if not node.hostname:
+                    continue
+
                 if not hostgroup.startswith("@"):
                     # hostgroups have to start with @
                     continue
 
-                if node.hostname in _get_hostlist(hostgroup):
+                hostlist_for_hg = _get_hostlist(hostgroup)
+                if node.hostname.lower() in hostlist_for_hg:
                     continue
 
-                hostlist_hostnames = _get_hostlist(hostgroup)
-                if node.hostname not in hostlist_hostnames:
-                    logging.info(
-                        "Adding hostname %s to hostgroup %s", node.hostname, hostgroup
-                    )
+                logging.info(
+                    "RDH hostname=%s in group=%s", node.hostname, hostlist_for_hg
+                )
+                logging.info(
+                    "Adding hostname %s to hostgroup %s", node.hostname, hostgroup
+                )
 
-                    check_call(
-                        [
-                            QCONF_PATH,
-                            "-aattr",
-                            "hostgroup",
-                            "hostlist",
-                            node.hostname,
-                            hostgroup,
-                        ]
-                    )
+                check_call(
+                    [
+                        QCONF_PATH,
+                        "-aattr",
+                        "hostgroup",
+                        "hostlist",
+                        node.hostname,
+                        hostgroup,
+                    ]
+                )
 
-    def add_node_to_cluster(self, node: Node) -> bool:
+            completed_nodes.append(node)
+
+        return completed_nodes
+
+    def handle_post_join_cluster(self, nodes: List[Node]) -> List[Node]:
+        """
+            feel free to set complexes / resources on the node etc.
+        """
+        return nodes
+
+    def add_nodes_to_cluster(self, nodes: List[Node]) -> List[Node]:
+        logging.getLogger("gridengine.driver").info("add_nodes_to_cluster")
+
+        if not nodes:
+            return []
+
+        ret: List[Node] = []
+        fqdns = check_output([QCONF_PATH, "-sh"]).decode().splitlines()
+        admin_hostnames = [fqdn.split(".")[0] for fqdn in fqdns]
+
+        fqdns = check_output([QCONF_PATH, "-ss"]).decode().splitlines()
+        submit_hostnames = [fqdn.split(".")[0] for fqdn in fqdns]
+
+        for node in nodes:
+            if self._add_node_to_cluster(node, admin_hostnames, submit_hostnames):
+                ret.append(node)
+        return ret
+
+    def _add_node_to_cluster(
+        self, node: Node, admin_hostnames: List[str], submit_hostnames: List[str]
+    ) -> bool:
         if not node.exists:
             logging.trace("%s does not exist yet, can not add to cluster.", node)
             return False
@@ -257,12 +293,6 @@ class GridEngineDriver:
                 "%s does not have a hostname yet, can not add to cluster.", node
             )
             return False
-
-        fqdns = check_output([QCONF_PATH, "-sh"]).decode().splitlines()
-        admin_hostnames = [fqdn.split(".")[0] for fqdn in fqdns]
-
-        fqdns = check_output([QCONF_PATH, "-ss"]).decode().splitlines()
-        submit_hostnames = [fqdn.split(".")[0] for fqdn in fqdns]
 
         # let's make sure the hostname is valid and reverse
         # dns compatible before adding to GE
@@ -296,7 +326,7 @@ class GridEngineDriver:
             logging.warning(
                 "Node %s has a hostname that can not be queried via reverse"
                 + " dns (private_ip=%s cyclecloud hostname=%s reverse dns hostname=%s)."
-                + "Often this repairs itself. Skipping",
+                + " Often this repairs itself. Skipping",
                 node,
                 node.private_ip,
                 node.hostname,
@@ -304,26 +334,26 @@ class GridEngineDriver:
             )
             return False
 
-        logging.info("Adding hostname %s", node.hostname)
         try:
             if node.hostname not in admin_hostnames:
                 logging.debug("Adding %s as administrative host", node)
                 check_call([QCONF_PATH, "-ah", node.hostname])
 
-            for qname in ["all.q", node.software_configuration["gridengine_qname"]]:
-                check_call(
-                    [
-                        QCONF_PATH,
-                        "-mattr",
-                        "queue",
-                        "slots",
-                        str(node.resources["slots"]),
-                        "{}@{}".format(qname, node.hostname),
-                    ]
-                )
-
             if node.hostname not in submit_hostnames:
                 logging.debug("Adding %s as submit host", node)
+
+                for qname in ["all.q", node.software_configuration["gridengine_qname"]]:
+                    check_call(
+                        [
+                            QCONF_PATH,
+                            "-mattr",
+                            "queue",
+                            "slots",
+                            str(node.resources["slots"]),
+                            "{}@{}".format(qname, node.hostname),
+                        ]
+                    )
+
                 check_call([QCONF_PATH, "-as", node.hostname])
 
         except CalledProcessError as e:
@@ -332,11 +362,8 @@ class GridEngineDriver:
 
         return True
 
-    def clean_hosts(self, invalid_nodes: Optional[List[SchedulerNode]]) -> None:
-        if invalid_nodes is None:
-            invalid_nodes = [
-                n for n in self.scheduler_nodes if n.metadata["state"] == "au"
-            ]
+    def clean_hosts(self, invalid_nodes: List[SchedulerNode]) -> None:
+        logging.getLogger("gridengine.driver").info("clean_hosts")
 
         if not invalid_nodes:
             return
@@ -348,6 +375,46 @@ class GridEngineDriver:
         self.scheduler_nodes = [
             n for n in self.scheduler_nodes if n not in invalid_nodes
         ]
+
+    def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+            # set site specific defaults. In this example, slots are defined
+            # as the number of gigs per node.
+            from hpc.autoscale import hpctypes as ht
+
+            config["gridengine"] = ge_config = config.get("gridengine", {})
+            if not ge_config.get("default_resources"):
+                one_gig = ht.Memory.value_of("1g")
+                ge_config["default_resources"] = [
+                    {
+                        "select": {},
+                        "name": "slots",
+                        "value": lambda node: node.memory // one_gig,
+                    }
+                ]
+
+            return config
+        """
+
+        return config
+
+    def preprocess_buckets(self, node_mgr: NodeManager) -> NodeManager:
+        """
+            # A toy example: disable all but certain regions given
+            # time of day
+            import time
+            now = time.localtime()
+            if now.tm_hour < 9:
+                limit_regions = ["westus", "westus2"]
+            else:
+                limit_regions = ["eastus"]
+
+            for bucket in node_mgr.get_buckets():
+
+                if bucket.location not in limit_regions:
+                    bucket.enabled = False
+        """
+        return node_mgr
 
     def __str__(self) -> str:
         return "GEDriver(jobs={}, scheduler_nodes={})".format(
@@ -488,6 +555,9 @@ def _parse_jobs(root: Element, ge_queues: Dict[str, GridEngineQueue]) -> List[Jo
             continue
 
         requested_queues = [str(x.text) for x in jijle.findall("hard_req_queue")]
+
+        if not requested_queues:
+            requested_queues = ["all.q"]
 
         job_id = _getr(jijle, "JB_job_number")
         slots = int(_getr(jijle, "slots"))
@@ -742,6 +812,73 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 "gridengine_hostgroups": " ".join(self.hostgroups_sorted),
             }
         return True
+
+    def preprocess_node_mgr(self, node_mgr: NodeManager) -> NodeManager:
+        """
+            # A toy example: disable all but certain regions given
+            # time of day
+            import time
+            now = time.localtime()
+            if now.tm_hour < 9:
+                limit_regions = ["westus", "westus2"]
+            else:
+                limit_regions = ["eastus"]
+
+            for bucket in node_mgr.get_buckets():
+
+                if bucket.location not in limit_regions:
+                    bucket.enabled = False
+        """
+        return node_mgr
+
+    def preprocess_demand_calculator(self, dcalc: DemandCalculator) -> DemandCalculator:
+        """
+            dcalc.allocate({})
+        """
+
+        return dcalc
+
+    def postprocess_demand_calculator(
+        self, dcalc: DemandCalculator
+    ) -> DemandCalculator:
+        """
+            # simple example to ensure there are at least 100 nodes
+            minimum = 100
+            to_allocate = minimum - len(dcalc.get_nodes())
+            if to_allocate > 0:
+                result = dcalc.allocate(
+                    {"node.nodearray": "htc", "exclusive": 1}, node_count=to_allocate
+                )
+                if not result:
+                    logging.warning("Failed to allocate minimum %s", result)
+                else:
+                    logging.info(
+                        "Allocated %d more nodes to reach minimum %d", to_allocate, minimum
+                    )
+        """
+        return dcalc
+
+    def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+            # set site specific defaults. In this example, slots are defined
+            # as the number of gigs per node.
+            from hpc.autoscale import hpctypes as ht
+
+            config["gridengine"] = ge_config = config.get("gridengine", {})
+            if not ge_config.get("default_resources"):
+                one_gig = ht.Memory.value_of("1g")
+                ge_config["default_resources"] = [
+                    {
+                        "select": {},
+                        "name": "slots",
+                        "value": lambda node: node.memory // one_gig,
+                    }
+                ]
+
+            return config
+        """
+
+        return config
 
     def __str__(self) -> str:
         return "QueueAndHostgroups(qname={}, hostgroups={}, placement_group={})".format(

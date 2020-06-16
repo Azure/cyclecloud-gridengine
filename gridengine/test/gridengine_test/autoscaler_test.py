@@ -1,9 +1,9 @@
 from typing import Any, List, Optional
 
 from hpc.autoscale.ccbindings.mock import MockClusterBinding
-from hpc.autoscale.job.computenode import SchedulerNode
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.job import Job
+from hpc.autoscale.job.schedulernode import SchedulerNode
 
 from gridengine import autoscaler, parallel_environments
 from gridengine_test import mock_driver
@@ -81,13 +81,13 @@ def test_basic() -> None:
     run_test(snodes(), [], unmatched=1, matched=0, new=0)
     run_test(snodes(), [_xjob("1")],                                unmatched=0, matched=1, new=0)  # noqa
     run_test(snodes(), [_xjob("1"), _xjob("2")],                    unmatched=0, matched=2, new=1)  # noqa
-    
+
     run_test(snodes(), [_xjob("1", {"customer_htc_flag": False}),
                         _xjob("2", {"customer_htc_flag": False})],  unmatched=1, matched=0, new=0)  # noqa
-    
+
     run_test(snodes(), [_xjob("1", {"customer_htc_flag": True}),
                         _xjob("2", {"customer_htc_flag": True})],   unmatched=1, matched=2, new=2)  # noqa
-    
+
     # ok, now let's make that scheduler node something CC is managing
     mock_bindings = _bindings()
     mock_bindings.add_node("htc-5", "htc", "Standard_F2", hostname="ip-010A0005")

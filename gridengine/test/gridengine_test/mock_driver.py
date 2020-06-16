@@ -1,8 +1,8 @@
 import logging
 from typing import Dict, List, Optional
 
-from hpc.autoscale.job.computenode import SchedulerNode
 from hpc.autoscale.job.job import Job
+from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
 
 
@@ -24,12 +24,15 @@ class MockGridEngineDriver:
             else:
                 assert self.drained[node.hostname] == node
 
-    def handle_join_cluster(self, matched_nodes: List[Node]) -> None:
+    def handle_join_cluster(self, matched_nodes: List[Node]) -> List[Node]:
+        ret = []
         for node in matched_nodes:
             if node.hostname and node.hostname not in self.current_hostnames:
                 self.scheduler_nodes.append(
                     SchedulerNode(node.hostname, node.resources)
                 )
+                ret.append(node)
+        return ret
 
     def handle_post_delete(self, nodes_to_delete: List[Node]) -> None:
         if not nodes_to_delete:

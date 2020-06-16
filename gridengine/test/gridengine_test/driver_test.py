@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from hpc.autoscale.job.computenode import SchedulerNode
+from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node import constraints
 
 from gridengine import driver

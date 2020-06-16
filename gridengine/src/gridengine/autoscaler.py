@@ -28,7 +28,9 @@ def autoscale_grid_engine(
     # interface to GE, generally by cli
     if ge_driver is None:
         # allow tests to pass in a mock
-        ge_driver = GridEngineDriver(config)
+        ge_driver = new_driver(config)
+
+    config = ge_driver.preprocess_config(config)
 
     logging.debug("Driver = %s", ge_driver)
 
@@ -52,7 +54,11 @@ def autoscale_grid_engine(
 
     # details here are that we pass in nodes that matter (matched) and the driver figures out
     # which ones are new and need to be added via qconf
-    ge_driver.handle_join_cluster([x for x in demand_result.compute_nodes if x.exists])
+    joined = ge_driver.handle_join_cluster(
+        [x for x in demand_result.compute_nodes if x.exists]
+    )
+
+    ge_driver.handle_post_join_cluster(joined)
 
     if ctx_handler:
         ctx_handler.set_context("[scaling]")
@@ -72,6 +78,11 @@ def autoscale_grid_engine(
 
     if nodes_to_delete:
         try:
+            logging.info(
+                "Deleting %s because they have been idle for at least %s seconds",
+                nodes_to_delete,
+                idle_timeout,
+            )
             delete_result = demand_calculator.delete(nodes_to_delete)
 
             if delete_result:
@@ -89,12 +100,14 @@ def autoscale_grid_engine(
 
 def calculate_demand(
     config: Dict,
-    ge_driver: GridEngineDriver,
+    ge_driver: Optional[GridEngineDriver] = None,
     ctx_handler: Optional[DefaultContextHandler] = None,
 ) -> DemandCalculator:
     # it has two member variables - jobs
     # ge_driver.jobs - autoscale Jobs
-    # ge_driver.compute_nodes - autoscale ComputeNodes
+    # ge_driver.scheduler_nodes - autoscale SchedulerNodes
+    if ge_driver is None:
+        ge_driver = new_driver(config)
 
     demand_calculator = new_demand_calculator(
         config, existing_nodes=ge_driver.scheduler_nodes
@@ -155,6 +168,7 @@ def print_demand(
     config: Dict,
     demand_result: DemandResult,
     output_columns: Optional[List[str]] = None,
+    output_format: Optional[str] = None,
 ) -> None:
     # and let's use the demand printer to print the demand_result.
     output_columns = output_columns or config.get(
@@ -174,8 +188,65 @@ def print_demand(
             "placement_group",
         ],
     )
-    demandprinter.print_demand(output_columns, demand_result)
+
+    if "all" in output_columns:
+        output_columns = []
+
+    output_format = output_format or "table"
+
+    demandprinter.print_demand(
+        output_columns, demand_result, output_format=output_format
+    )
     return demand_result
+
+
+def new_driver(config: Dict) -> GridEngineDriver:
+    import importlib
+
+    ge_config = config.get("gridengine", {})
+
+    # just shorthand for gridengine.deferdriver.DeferredDriver
+    if ge_config.get("driver_scripts_dir"):
+        deferred_qname = "gridengine.deferdriver.DeferredDriver"
+        if ge_config.get("driver", deferred_qname) == deferred_qname:
+            ge_config["driver"] = deferred_qname
+
+    driver_expr = ge_config.get("driver", "gridengine.driver.GridEngineDriver")
+
+    if "." not in driver_expr:
+        raise BadDriverError(driver_expr)
+
+    module_expr, func_or_class_name = driver_expr.rsplit(".", 1)
+
+    try:
+        module = importlib.import_module(module_expr)
+    except Exception as e:
+        logging.exception(
+            "Could not load module %s. Is it in the"
+            + " PYTHONPATH environment variable? %s",
+            str(e),
+            sys.path,
+        )
+        raise
+
+    func_or_class = getattr(module, func_or_class_name)
+    return func_or_class(config)
+
+
+class BadDriverError(RuntimeError):
+    def __init__(self, bad_expr: str) -> None:
+        super().__init__()
+        self.bad_expr = bad_expr
+        self.message = str(self)
+
+    def __str__(self) -> str:
+        return (
+            "Expected gridengine.driver=module.func_name"
+            + " or gridengine.driver=module.class_name. Got {}".format(self.bad_expr)
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 def main() -> int:
