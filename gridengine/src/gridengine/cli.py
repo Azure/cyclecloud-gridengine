@@ -7,7 +7,6 @@ import typing
 from argparse import ArgumentParser
 from copy import deepcopy
 from io import TextIOWrapper
-from subprocess import check_call, check_output
 from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
 
 from hpc.autoscale import hpclogging as logging
@@ -21,7 +20,7 @@ from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import partition
 
 from gridengine import autoscaler, parallel_environments
-from gridengine.driver import QCONF_PATH, GridEngineDriver
+from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
 from gridengine.parallel_environments import ParallelEnvironment
 
 
@@ -30,16 +29,24 @@ def error(msg: Any, *args: Any) -> None:
     sys.exit(1)
 
 
-def autoscale(config: Dict, output_columns: Optional[List[str]] = None) -> None:
+def autoscale(
+    config: Dict,
+    output_columns: Optional[List[str]] = None,
+    output_format: Optional[str] = None,
+) -> None:
     ctx_handler = register_result_handler(DefaultContextHandler("[initialization]"))
     if output_columns:
         config["output_columns"] = output_columns
+
+    if output_format:
+        config["output_format"] = output_format
+
     autoscaler.autoscale_grid_engine(config, ctx_handler=ctx_handler)
 
 
 def join_cluster(config: Dict, hostname: str) -> None:
     ge_driver, demand_calc, node = _find_node(config, hostname)
-    GridEngineDriver(config).add_node_to_cluster(node)
+    ge_driver.add_nodes_to_cluster([node])
 
 
 def drain_node(config: Dict, hostname: str, force: bool = False) -> None:
@@ -75,7 +82,7 @@ def _find_node(
     if not hostname:
         error("Please specify a hostname")
 
-    ge_driver = GridEngineDriver(config)
+    ge_driver = autoscaler.new_driver(config)
     demand_calc = autoscaler.calculate_demand(config, ge_driver)
     demand_result = demand_calc.finish()
     by_hostname = partition(
@@ -95,7 +102,25 @@ def test(config: Dict) -> None:
     create_queues(config)
 
 
+def _master_hostname(config: Dict) -> str:
+    master_hostname = config.get("gridengine", {}).get("master")
+    if not master_hostname:
+        master_hostname = socket.gethostname().split(".")[0]
+    return master_hostname
+
+
 def create_queues(config: Dict) -> None:
+    check_call(
+        [
+            QCONF_PATH,
+            "-mattr",
+            "queue",
+            "slots",
+            "0",
+            "{}@{}".format("all.q", _master_hostname(config)),
+        ]
+    )
+
     template = check_output([QCONF_PATH, "-sq", "all.q"]).decode().splitlines()
     template = parallel_environments._flatten_lines(template)
 
@@ -182,9 +207,7 @@ def create_queue(
             all_hostgroups.append(expr)
     all_hostgroups.extend(hostgroup_to_pes.keys())
 
-    master_hostname = config.get("gridengine", {}).get("master")
-    if not master_hostname:
-        master_hostname = socket.gethostname().split(".")[0]
+    master_hostname = _master_hostname(config)
 
     for hostgroup in all_hostgroups:
         if hostgroup is None:
@@ -333,7 +356,7 @@ def amend_queue_config(config: Dict, writer: TextIO = sys.stdout) -> None:
     by_nodearray = partition(node_mgr.get_buckets(), lambda b: b.nodearray)
     system_pes: Dict[
         str, ParallelEnvironment
-    ] = parallel_environments.read_parallel_environments()
+    ] = parallel_environments.read_parallel_environments(config)
 
     for nodearray, buckets in by_nodearray.items():
         bucket = buckets[0]
@@ -379,18 +402,19 @@ def demand(
     jobs: Optional[str] = None,
     scheduler_nodes: Optional[str] = None,
     output_columns: Optional[List[str]] = None,
+    output_format: Optional[str] = None,
 ) -> None:
-    ge_driver = GridEngineDriver(config)
+    ge_driver = autoscaler.new_driver(config)
     demand_calc = autoscaler.calculate_demand(config, ge_driver)
     demand_result = demand_calc.finish()
 
-    autoscaler.print_demand(config, demand_result, output_columns)
+    autoscaler.print_demand(config, demand_result, output_columns, output_format)
 
 
 def nodes(
     config: Dict, constraint_expr: str, output_columns: Optional[List[str]] = None
 ) -> None:
-    ge_driver = GridEngineDriver(config)
+    ge_driver = autoscaler.new_driver(config)
     node_mgr = new_node_manager(config, existing_nodes=ge_driver.scheduler_nodes)
     filtered = _query_with_constraints(config, constraint_expr, node_mgr.get_nodes())
     demand_result = DemandResult([], filtered, [])
@@ -398,8 +422,21 @@ def nodes(
 
 
 def jobs(config: Dict) -> None:
-    ge_driver = GridEngineDriver(config)
+    ge_driver = autoscaler.new_driver(config)
     json.dump(ge_driver.jobs, sys.stdout, indent=2, default=lambda x: x.to_dict())
+
+
+def scheduler_nodes(config: Dict) -> None:
+    ge_driver = autoscaler.new_driver(config)
+    json.dump(
+        ge_driver.scheduler_nodes, sys.stdout, indent=2, default=lambda x: x.to_dict()
+    )
+
+
+def jobs_and_nodes(config: Dict) -> None:
+    ge_driver = autoscaler.new_driver(config)
+    to_dump = {"jobs": ge_driver.jobs, "nodes": ge_driver.scheduler_nodes}
+    json.dump(to_dump, sys.stdout, indent=2, default=lambda x: x.to_dict())
 
 
 def complexes(config: Dict) -> None:
@@ -408,11 +445,14 @@ def complexes(config: Dict) -> None:
 
 
 def buckets(
-    config: Dict, constraint_expr: str, output_columns: Optional[List[str]] = None
+    config: Dict,
+    constraint_expr: str,
+    output_columns: Optional[List[str]] = None,
+    output_format: Optional[str] = None,
 ) -> None:
-    ge_driver = GridEngineDriver(config)
-    node_mgr = new_node_manager(config, existing_nodes=ge_driver)
-
+    # ge_driver = autoscaler.new_driver(config)
+    node_mgr = new_node_manager(config)
+    specified_output_columns = output_columns
     output_columns = output_columns or [
         "nodearray",
         "vm_size",
@@ -421,22 +461,42 @@ def buckets(
         "memory",
         "available_count",
     ]
-    for bucket in node_mgr.get_buckets():
+
+    if specified_output_columns is None:
+        for bucket in node_mgr.get_buckets():
+            for resource_name in bucket.resources:
+                if resource_name not in output_columns:
+                    output_columns.append(resource_name)
 
         for attr in dir(bucket.limits):
             if attr[0].isalpha() and "count" in attr:
                 value = getattr(bucket.limits, attr)
                 if isinstance(value, int):
-                    # output_columns.append(attr)
                     bucket.resources[attr] = value
+                    bucket.example_node._resources[attr] = value
 
     filtered = _query_with_constraints(config, constraint_expr, node_mgr.get_buckets())
 
     demand_result = DemandResult([], [f.example_node for f in filtered], [])
 
+    if "all" in output_columns:
+        output_columns = ["all"]
     config["output_columns"] = output_columns
-    # print_columns(demand_result)
-    autoscaler.print_demand(config, demand_result, output_columns)
+
+    autoscaler.print_demand(config, demand_result, output_columns, output_format)
+
+
+def resources(config: Dict, constraint_expr: str) -> None:
+    ge_driver = autoscaler.new_driver(config)
+    node_mgr = new_node_manager(config, existing_nodes=ge_driver)
+
+    filtered = _query_with_constraints(config, constraint_expr, node_mgr.get_buckets())
+
+    columns = set()
+    for node in filtered:
+        columns.update(set(node.resources.keys()))
+        columns.update(set(node.resources.keys()))
+    config["output_columns"]
 
 
 def _parse_contraint(constraint_expr: str) -> List[NodeConstraint]:
@@ -522,7 +582,15 @@ def main(argv: Iterable[str] = None) -> None:
         def parse_columns(c: str) -> List[str]:
             return c.split(",")
 
+        def parse_format(c: str) -> str:
+            c = c.lower()
+            if c in ["json", "table", "table_headerless"]:
+                return c
+            print("Expected json, table or table_headerless - got", c, file=sys.stderr)
+            sys.exit(1)
+
         parser.add_argument("--output-columns", "-o", type=parse_columns)
+        parser.add_argument("--output-format", "-F", type=parse_format)
         return parser
 
     add_parser_with_columns("autoscale", autoscale)
@@ -532,9 +600,7 @@ def main(argv: Iterable[str] = None) -> None:
     add_parser("delete_node", delete_node).add_argument(
         "-H", "--hostname", required=True
     )
-    add_parser("drain_node", delete_node).add_argument(
-        "-H", "--hostname", required=True
-    )
+    add_parser("drain_node", drain_node).add_argument("-H", "--hostname", required=True)
 
     add_parser("amend_queue_config", amend_queue_config)
     add_parser("create_queues", create_queues)
@@ -547,12 +613,17 @@ def main(argv: Iterable[str] = None) -> None:
     )
 
     add_parser("jobs", jobs)
+    add_parser("scheduler_nodes", scheduler_nodes)
+    add_parser("jobs_and_nodes", jobs_and_nodes)
 
     add_parser_with_columns("buckets", buckets).add_argument(
         "--constraint-expr", "-C", default="[]"
     )
 
     args = parser.parse_args()
+    if not hasattr(args, "func"):
+        parser.print_help()
+        sys.exit(1)
 
     kwargs = {}
     for k in dir(args):
