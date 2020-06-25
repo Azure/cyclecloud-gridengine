@@ -219,24 +219,6 @@ template "#{gridengineroot}/conf/exec" do
   )
 end
 
-# UGE 8.3 introduces a new attribute `aapre` to complexes
-# aapre - "available after preemption"
-# Essentially allows a resource to be made avaiable after preemption
-# This change requires a new complex file format
-if node[:gridengine][:make]=='ge' and (Gem::Version.new(node[:gridengine][:version]) >= Gem::Version.new('8.3.0'))
-  complex_file = "conf/complexes.ge-8.3.x"
-else
-  complex_file = "conf/complexes"
-end
-
-cookbook_file "#{gridengineroot}/conf/complexes" do
-  source complex_file
-  owner "root"
-  group "root"
-  mode "0755"
-  action :create
-end
-
 template "#{gridengineroot}/conf/mpislots" do
   source "mpislots.erb"
   owner "root"
@@ -336,11 +318,22 @@ cookbook_file "#{gridengineroot}/SGETerm.sh" do
   only_if "test -d #{gridengineroot}"
 end
 
-execute "set complexes" do
-  command ". /etc/cluster-setup.sh && qconf -Mc #{gridengineroot}/conf/complexes && touch #{chefstate}/gridengine.setcomplexes.done"
-  creates "#{chefstate}/gridengine.setcomplexes.done"
-  action :run
+%w( slot_type onsched placement_group exclusive ).each do |confFile|
+  cookbook_file "#{gridengineroot}/conf/complex_#{confFile}" do
+    source "conf/complex_#{confFile}"
+    owner "root"
+    group "root"
+    mode "0755"
+    only_if "test -d #{gridengineroot}/conf"
+  end
+
+  execute "set #{confFile} complex" do
+    command ". /etc/cluster-setup.sh && qconf -Ace #{gridengineroot}/conf/complex_#{confFile} && touch #{chefstate}/gridengine.setcomplex.#{confFile}.done"
+    creates "#{chefstate}/gridengine.setcomplex.#{confFile}.done"
+    action :run
+  end
 end
+
 
 %w( mpi mpislots smpslots ).each do |confFile|
   execute "Add the conf file: " + confFile do
@@ -415,42 +408,42 @@ package 'python3' do
   
 end
 
-bash 'setup virtualenv' do
-  code <<-EOH
-  set -e
-  source /etc/profile.d/sgesettings.sh
-  python3 -m pip install virtualenv
-  python3 -m virtualenv #{node[:cyclecloud][:bootstrap]}/gridenginevenv
-  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
-  
-  jetpack download cyclecloud-api.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-  jetpack download cyclecloud-scalelib-0.1.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-  jetpack download cyclecloud-gridengine-2.0.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-  
-  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-api.tar.gz
-  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-scalelib-0.1.0.tar.gz
-  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-gridengine-2.0.0.tar.gz
-  # takes the bootstrap config and amends relevant info so that the next step can properly create our queues.
-  python -m gridengine.cli amend_queue_config -c #{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json > #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
-  python -m gridengine.cli create_queues -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
-  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
-  EOH
-  action :run
-  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
-end
-
-
-file "#{node[:cyclecloud][:bootstrap]}/gridengine/gridengine_autoscale.sh" do
-  content <<-EOF#!/bin/env bash
-  set -e
-  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
-  # -c is not required here, leaving so it is obvious what config is used when debugging
-  python -m gridengine.cli autoscale -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
-  EOF
-  owner "root"
-  group "root"
-  mode "0755"
-  action :create
-end
+#bash 'setup virtualenv' do
+#  code <<-EOH
+#  set -e
+#  source /etc/profile.d/sgesettings.sh
+#  python3 -m pip install virtualenv
+#  python3 -m virtualenv #{node[:cyclecloud][:bootstrap]}/gridenginevenv
+#  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
+#  
+#  jetpack download cyclecloud_api-8.0.1-py2.py3-none-any.whl --project gridengine #{node[:cyclecloud][:bootstrap]}/
+#  jetpack download autoscale-0.1.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+#  jetpack download cyclecloud-gridengine-2.0.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+#  
+#  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud_api-8.0.1-py2.py3-none-any.whl
+#  pip install #{node[:cyclecloud][:bootstrap]}/autoscale-0.1.0.tar.gz
+#  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-gridengine-2.0.0.tar.gz
+#  # takes the bootstrap config and amends relevant info so that the next step can properly create our queues.
+#  python -m gridengine.cli amend_queue_config -c #{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json > #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
+#  python -m gridengine.cli create_queues -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
+#  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
+#  EOH
+#  action :run
+#  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
+#end
+#
+#
+#file "#{node[:cyclecloud][:bootstrap]}/gridengine/gridengine_autoscale.sh" do
+#  content <<-EOF#!/bin/env bash
+#  set -e
+#  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
+#  # -c is not required here, leaving so it is obvious what config is used when debugging
+#  python -m gridengine.cli autoscale -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
+#  EOF
+#  owner "root"
+#  group "root"
+#  mode "0755"
+#  action :create
+#end
 
 include_recipe "gridengine::autostart"

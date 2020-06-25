@@ -1,0 +1,10 @@
+name        onsched
+shortcut    onsched
+type        BOOL
+relop       ==
+requestable YES
+consumable  NO
+default     0
+urgency     0
+aapre       NO
+affinity    0.000000

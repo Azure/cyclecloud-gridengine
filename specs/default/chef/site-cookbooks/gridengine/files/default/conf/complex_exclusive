@@ -1,0 +1,10 @@
+name        exclusive
+shortcut    exclusive
+type        BOOL
+relop       EXCL
+requestable YES
+consumable  YES
+default     0
+urgency     1000
+aapre       NO
+affinity    0.000000

@@ -30,6 +30,7 @@ Autoscale = $Autoscale
     
         [[[configuration]]]
 
+        [[[cluster-init cyclecloud/cyclecloud-scalelib:default]]]
         [[[cluster-init cyclecloud/gridengine:master]]]
 
         [[[network-interface eth0]]]
