@@ -1,3 +1,4 @@
+import code
 import json
 import os
 import socket
@@ -17,7 +18,7 @@ from hpc.autoscale.node.constraints import NodeConstraint, get_constraints
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import new_node_manager
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
-from hpc.autoscale.util import partition
+from hpc.autoscale.util import partition, partition_single
 
 from gridengine import autoscaler, parallel_environments
 from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
@@ -44,58 +45,91 @@ def autoscale(
     autoscaler.autoscale_grid_engine(config, ctx_handler=ctx_handler)
 
 
-def join_cluster(config: Dict, hostname: str) -> None:
-    ge_driver, demand_calc, node = _find_node(config, hostname)
-    ge_driver.add_nodes_to_cluster([node])
+def join_cluster(config: Dict, hostnames: List[str], node_names: List[str]) -> None:
+    ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
+    ge_driver.add_nodes_to_cluster(nodes)
 
 
-def drain_node(config: Dict, hostname: str, force: bool = False) -> None:
-    ge_driver, demand_calc, node = _find_node(config, hostname)
-    ge_driver.handle_draining([node])
+def drain_node(
+    config: Dict, hostnames: List[str], node_names: List[str], force: bool = False
+) -> None:
+    ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
+    ge_driver.handle_draining(nodes)
 
 
-def delete_node(config: Dict, hostname: str, force: bool = False) -> None:
-    ge_driver, demand_calc, node = _find_node(config, hostname)
+def delete_nodes(
+    config: Dict, hostnames: List[str], node_names: List[str], force: bool = False
+) -> None:
+    ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
 
-    if node.assignments:
-        error(
-            "Node is currently matched to one or more jobs (%s)."
-            + " Please specify --force to continue.",
-            node.assignments,
-        )
+    if not force:
+        for node in nodes:
+            if node.assignments:
+                error(
+                    "Node %s is currently matched to one or more jobs (%s)."
+                    + " Please specify --force to continue.",
+                    node,
+                    node.assignments,
+                )
 
-    if node.required:
-        error(
-            "Node is unmatched but is flagged as required."
-            + " Please specify --force to continue."
-        )
+            if node.required:
+                error(
+                    "Node %s is unmatched but is flagged as required."
+                    + " Please specify --force to continue.",
+                    node,
+                )
 
-    ge_driver.handle_draining([node])
-    demand_calc.delete([node])
-    ge_driver.handle_post_delete([node])
-    print("Deleted {}".format(node))
+    ge_driver.handle_draining(nodes)
+    print("Drained {}".format(nodes))
+
+    demand_calc.delete(nodes)
+    print("Deleting {}".format(nodes))
+
+    ge_driver.handle_post_delete(nodes)
+    print("Deleted {}".format(nodes))
 
 
-def _find_node(
-    config: Dict, hostname: str
-) -> Tuple[GridEngineDriver, DemandCalculator, Node]:
-    if not hostname:
-        error("Please specify a hostname")
+def _find_nodes(
+    config: Dict, hostnames: List[str], node_names: List[str]
+) -> Tuple[GridEngineDriver, DemandCalculator, List[Node]]:
+    hostnames = hostnames or []
+    node_names = node_names or []
 
     ge_driver = autoscaler.new_driver(config)
     demand_calc = autoscaler.calculate_demand(config, ge_driver)
     demand_result = demand_calc.finish()
-    by_hostname = partition(
-        demand_result.compute_nodes, lambda n: n.hostname.lower() if n.hostname else ""
+    by_hostname = partition_single(
+        demand_result.compute_nodes, lambda n: n.hostname_or_uuid.lower()
     )
-    if hostname.lower() not in by_hostname:
-        error(
-            "Could not find a CycleCloud node that has hostname {}."
-            + " Run 'nodes' to see available nodes.",
-            hostname,
-        )
+    by_node_name = partition_single(
+        demand_result.compute_nodes, lambda n: n.name.lower()
+    )
+    found_nodes = []
+    for hostname in hostnames:
+        if not hostname:
+            error("Please specify a hostname")
 
-    return ge_driver, demand_calc, by_hostname[hostname.lower()][0]
+        if hostname.lower() not in by_hostname:
+            error(
+                "Could not find a CycleCloud node that has hostname %s."
+                + " Run 'nodes' to see available nodes.",
+                hostname,
+            )
+        found_nodes.append(by_hostname[hostname.lower()])
+
+    for node_name in node_names:
+        if not node_name:
+            error("Please specify a node_name")
+
+        if node_name.lower() not in by_node_name:
+            error(
+                "Could not find a CycleCloud node that has node_name %s."
+                + " Run 'nodes' to see available nodes.",
+                node_name,
+            )
+        found_nodes.append(by_node_name[node_name.lower()])
+
+    return ge_driver, demand_calc, found_nodes
 
 
 def test(config: Dict) -> None:
@@ -412,12 +446,15 @@ def demand(
 
 
 def nodes(
-    config: Dict, constraint_expr: str, output_columns: Optional[List[str]] = None
+    config: Dict,
+    constraint_expr: str,
+    output_columns: Optional[List[str]] = None,
+    output_format: Optional[str] = None,
 ) -> None:
     ge_driver = autoscaler.new_driver(config)
     node_mgr = new_node_manager(config, existing_nodes=ge_driver.scheduler_nodes)
     filtered = _query_with_constraints(config, constraint_expr, node_mgr.get_nodes())
-    demand_result = DemandResult([], filtered, [])
+    demand_result = DemandResult([], filtered, [], [])
     autoscaler.print_demand(config, demand_result, output_columns)
 
 
@@ -439,9 +476,24 @@ def jobs_and_nodes(config: Dict) -> None:
     json.dump(to_dump, sys.stdout, indent=2, default=lambda x: x.to_dict())
 
 
-def complexes(config: Dict) -> None:
+def complexes(config: Dict, include_irrelevant: bool = False) -> None:
+    relevant: typing.Optional[typing.Set[str]]
+    if include_irrelevant:
+        ge_config = config.get("gridengine", {})
+        if "relevant_complexes" in ge_config:
+            ge_config.pop("relevant_complexes")
+
+    relevant = set(config.get("gridengine", {}).get("relevant_complexes", []))
+
+    already_printed: typing.Set[str] = set()
     for complex in parallel_environments.read_complexes(config).values():
-        print(repr(complex))
+        if (
+            include_irrelevant
+            or complex.name in relevant
+            and complex.name not in already_printed
+        ):
+            print(repr(complex))
+            already_printed.add(complex.name)
 
 
 def buckets(
@@ -541,6 +593,77 @@ def _query_with_constraints(
     return filtered
 
 
+class ReraiseAssertionInterpreter(code.InteractiveConsole):
+    def __init__(self, locals=None, filename="<console>", reraise=True):
+        code.InteractiveConsole.__init__(self, locals=locals, filename=filename)
+        self.reraise = reraise
+        hist_file = os.path.expanduser("~/.cyclegehistory")
+        
+        if os.path.exists(hist_file):
+            with open(hist_file) as fr:
+                self.history_lines = fr.readlines()
+        else:
+            self.history_lines = []
+        self.history_fw = open(hist_file, "a")
+
+    def raw_input(self, prompt: str = "") -> str:
+        line = super().raw_input(prompt)
+        if line.strip():
+            self.history_fw.write(line)
+            self.history_fw.write("\n")
+            self.history_fw.flush()
+        return line
+
+    def showtraceback(self):
+        if self.reraise:
+            _, value, _ = sys.exc_info()
+            if isinstance(value, AssertionError) or isinstance(value, SyntaxError):
+                raise value
+
+        return code.InteractiveConsole.showtraceback(self)
+
+
+def shell(config: Dict) -> None:
+    ge_driver = autoscaler.new_driver(config)
+    ctx = DefaultContextHandler("[interactive]")
+    demand_calc = autoscaler.new_demand_calculator(config, ge_driver, ctx)
+    shell_locals = {
+        "config": config,
+        "ctx": ctx,
+        "ge_driver": ge_driver,
+        "demand_calc": demand_calc,
+        "node_mgr": demand_calc.node_mgr,
+        "jobs": ge_driver.jobs,
+        "dbconn": demand_calc.node_history.conn
+    }
+    banner = "\nCycleCloud GE Autoscale Shell"
+    interpreter = ReraiseAssertionInterpreter(locals=shell_locals)
+    try:
+        __import__("readline")
+        # some magic - create a completer that is bound to the locals in this interpreter and not
+        # the __main__ interpreter.
+        interpreter.push("import readline, rlcompleter")
+        interpreter.push('readline.parse_and_bind("tab: complete")')
+        interpreter.push("_completer = rlcompleter.Completer(locals())")
+        interpreter.push("def _complete_helper(text, state):")
+        interpreter.push("    ret = _completer.complete(text, state)")
+        interpreter.push('    ret = ret + ")" if ret[-1] == "(" else ret')
+        interpreter.push("    return ret")
+        interpreter.push("")
+        interpreter.push("readline.set_completer(_complete_helper)")
+        for item in interpreter.history_lines:
+            if '"""' in item:
+                interpreter.push("readline.add_history('''%s''')" % item.rstrip("\n"))
+            else:
+                interpreter.push('readline.add_history("""%s""")' % item.rstrip("\n"))
+    except ImportError:
+        banner += (
+            "\nWARNING: `readline` is not installed, so autocomplete will not work."
+        )
+
+    interpreter.interact(banner=banner)
+
+
 def main(argv: Iterable[str] = None) -> None:
     parser = ArgumentParser()
     sub_parsers = parser.add_subparsers()
@@ -576,11 +699,11 @@ def main(argv: Iterable[str] = None) -> None:
         )
         return new_parser
 
+    def str_list(c: str):
+        return c.split(",")
+
     def add_parser_with_columns(name: str, func: Callable) -> ArgumentParser:
         parser = add_parser(name, func)
-
-        def parse_columns(c: str) -> List[str]:
-            return c.split(",")
 
         def parse_format(c: str) -> str:
             c = c.lower()
@@ -589,22 +712,27 @@ def main(argv: Iterable[str] = None) -> None:
             print("Expected json, table or table_headerless - got", c, file=sys.stderr)
             sys.exit(1)
 
-        parser.add_argument("--output-columns", "-o", type=parse_columns)
+        parser.add_argument("--output-columns", "-o", type=str_list)
         parser.add_argument("--output-format", "-F", type=parse_format)
         return parser
 
     add_parser_with_columns("autoscale", autoscale)
     add_parser("join_cluster", join_cluster).add_argument(
-        "-H", "--hostname", required=True
+        "-H", "--hostname", type=str_list, required=True
     )
-    add_parser("delete_node", delete_node).add_argument(
-        "-H", "--hostname", required=True
-    )
+
+    delete_parser = add_parser("delete_nodes", delete_nodes)
+    delete_parser.add_argument("-H", "--hostnames", type=str_list, default=[])
+    delete_parser.add_argument("-N", "--node-names", type=str_list, default=[])
+    delete_parser.add_argument("--force", action="store_true", default=False)
+
     add_parser("drain_node", drain_node).add_argument("-H", "--hostname", required=True)
 
     add_parser("amend_queue_config", amend_queue_config)
     add_parser("create_queues", create_queues)
-    add_parser("complexes", complexes)
+    add_parser("complexes", complexes).add_argument(
+        "-a", "--include-irrelevant", action="store_true", default=False
+    )
     add_parser_with_columns("demand", demand).add_argument(
         "--jobs", "-j", default=None, required=False
     )
@@ -619,6 +747,8 @@ def main(argv: Iterable[str] = None) -> None:
     add_parser_with_columns("buckets", buckets).add_argument(
         "--constraint-expr", "-C", default="[]"
     )
+
+    add_parser("shell", shell)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):
