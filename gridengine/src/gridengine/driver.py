@@ -19,7 +19,7 @@ from hpc.autoscale.node.constraints import (
 )
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import NodeManager
-from hpc.autoscale.results import SatisfiedResult
+from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
 from hpc.autoscale.util import partition, partition_single
 
 from gridengine import parallel_environments
@@ -137,6 +137,9 @@ class GridEngineDriver:
                                     hostlist_name,
                                 ]
                             )
+                    if queue_name not in queue_configs:
+                        logging.error("Queue %s does not exist? Ignoring node %s", queue_name, node)
+                        continue
 
                     queue_config = queue_configs[queue_name]
 
@@ -263,6 +266,18 @@ class GridEngineDriver:
         """
         return nodes
 
+    def handle_failed_nodes(self, nodes: List[Node]) -> List[Node]:
+        if not nodes:
+            return nodes
+        logging.error("The following nodes are in a failed state: %s", nodes)
+        return nodes
+
+    def handle_boot_timeout(self, nodes: List[Node]) -> List[Node]:
+        if not nodes:
+            return nodes
+        logging.error("The following nodes have not booted in time: %s", nodes)
+        return nodes
+
     def add_nodes_to_cluster(self, nodes: List[Node]) -> List[Node]:
         logging.getLogger("gridengine.driver").info("add_nodes_to_cluster")
 
@@ -284,6 +299,10 @@ class GridEngineDriver:
     def _add_node_to_cluster(
         self, node: Node, admin_hostnames: List[str], submit_hostnames: List[str]
     ) -> bool:
+        if node.state == "Failed":
+            logging.warning("Ignoring failed node %s", node)
+            return False
+
         if not node.exists:
             logging.trace("%s does not exist yet, can not add to cluster.", node)
             return False
@@ -416,6 +435,15 @@ class GridEngineDriver:
         """
         return node_mgr
 
+    def node_prioritizer(self, node: Node) -> int:
+        return -node.available["slots"]
+
+    def early_bailout(self, node: Node) -> EarlyBailoutResult:
+        cond = node.available["slots"] == 0
+        if cond:
+            return EarlyBailoutResult("NoMoreSlots", node, reasons=["slots == 0"])
+        return EarlyBailoutResult("success")
+
     def __str__(self) -> str:
         return "GEDriver(jobs={}, scheduler_nodes={})".format(
             self.jobs[:100], self.scheduler_nodes[:100]
@@ -463,14 +491,15 @@ def _get_jobs_and_nodes(
     ge_queues = partition_single(
         parallel_environments.read_queue_configs(autoscale_config), lambda q: q.qname
     )
-    nodes = _parse_scheduler_nodes(root, ge_queues)
-    jobs = _parse_jobs(root, ge_queues)
-    return jobs, nodes
+    nodes, running_jobs = _parse_scheduler_nodes(root, ge_queues)
+    pending_jobs = _parse_jobs(root, ge_queues)
+    return running_jobs + pending_jobs, nodes
 
 
 def _parse_scheduler_nodes(
     root: Element, ge_queues: Dict[str, GridEngineQueue]
-) -> List[SchedulerNode]:
+) -> Tuple[List[SchedulerNode], List[Job]]:
+    running_jobs = {}
     schedulers = check_output([QCONF_PATH, "-sss"]).decode().splitlines()
 
     compute_nodes: Dict[str, SchedulerNode] = {}
@@ -480,8 +509,8 @@ def _parse_scheduler_nodes(
         name = _getr(qiqle, "name")
 
         queue_name, fqdn = name.split("@", 1)
-        if queue_name == "all.q":
-            continue
+        # if queue_name == "all.q":
+        #     continue
 
         ge_queue = ge_queues.get(queue_name)
         if not ge_queue:
@@ -539,100 +568,110 @@ def _parse_scheduler_nodes(
 
         # use assign_job so we just accept that this job is running on this node.
         for jle in qiqle.findall("job_list"):
+            running_job = _parse_job(jle, ge_queues)
+            if running_job:
+                if not running_jobs.get(running_job.name):
+                    running_jobs[running_job.name] = running_job
+                running_jobs[running_job.name].executing_hostnames.append(compute_node.hostname)
             compute_node.assign(_getr(jle, "JB_job_number"))
 
         compute_nodes[compute_node.hostname] = compute_node
 
-    return list(compute_nodes.values())
+    return list(compute_nodes.values()), list(running_jobs.values())
 
 
 def _parse_jobs(root: Element, ge_queues: Dict[str, GridEngineQueue]) -> List[Job]:
     autoscale_jobs: List[Job] = []
 
     for jijle in root.findall("job_info/job_list"):
-        if _get(jijle, "state") == "running":
-            # running jobs are already accounted for above
-            continue
-
-        requested_queues = [str(x.text) for x in jijle.findall("hard_req_queue")]
-
-        if not requested_queues:
-            requested_queues = ["all.q"]
-
-        job_id = _getr(jijle, "JB_job_number")
-        slots = int(_getr(jijle, "slots"))
-
-        if len(requested_queues) != 1 or ("*" in requested_queues[0]):
-            logging.error(
-                "We support submitting to at least one and only one queue."
-                + " Wildcards are also not supported."
-                + " Ignoring job %s submitted to %s.",
-                job_id,
-                requested_queues,
-            )
-            continue
-
-        qname = requested_queues[0]
-        if qname not in ge_queues:
-            logging.error("Unknown queue %s for job %s", qname, job_id)
-            continue
-
-        ge_queue: GridEngineQueue = ge_queues[qname]
-
-        num_tasks = 1
-        tasks_expr = _get(jijle, "tasks")
-
-        if tasks_expr:
-            num_tasks = _parse_tasks(tasks_expr)
-
-        constraints: List[Dict] = [{"slots": slots}] + ge_queue.constraints
-
-        job_resources: Dict[str, str] = {}
-
-        for req in jijle.iter("hard_request"):
-            if req.text is None:
-                logging.warning(
-                    "Found null hard_request (%s) for job %s, skipping", req, job_id
-                )
-                continue
-
-            resource_name = req.attrib["name"]
-            complex = ge_queue.complexes.get(resource_name)
-            if not complex:
-                req_value: Any = req.text
-            else:
-                req_value = complex.parse(req.text)
-
-            constraints.append({resource_name: req_value})
-            job_resources[resource_name] = req_value
-
-            if complex and complex.shortcut != complex.name:
-                constraints.append({complex.shortcut: req_value})
-                job_resources[complex.shortcut] = req_value
-
-        job: Job
-
-        pe_elem = jijle.find("requested_pe")
-        if pe_elem is not None:
-            # dealing with parallel jobs (qsub -pe ) is much more complicated
-            job = _pe_job(ge_queue, pe_elem, job_id, constraints, slots, num_tasks)
-            if job is None:
-                continue
-        else:
-            constraints.append(
-                QueueAndHostgroupConstraint(
-                    ge_queue.qname, list(ge_queue.hostlist_groups), None
-                )
-            )
-            job = Job(job_id, constraints, iterations=num_tasks)
-
-        job.metadata["gridengine"] = {
-            "resources": job_resources,
-        }
-
-        autoscale_jobs.append(job)
+        job = _parse_job(jijle, ge_queues)
+        if job:
+            autoscale_jobs.append(job)
 
     return autoscale_jobs
+
+
+def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optional[Job]:
+    job_state = _get(jijle, "state")
+
+    requested_queues = [str(x.text) for x in jijle.findall("hard_req_queue")]
+
+    if not requested_queues:
+        requested_queues = ["all.q"]
+
+    job_id = _getr(jijle, "JB_job_number")
+    slots = int(_getr(jijle, "slots"))
+
+    if len(requested_queues) != 1 or ("*" in requested_queues[0]):
+        logging.error(
+            "We support submitting to at least one and only one queue."
+            + " Wildcards are also not supported."
+            + " Ignoring job %s submitted to %s.",
+            job_id,
+            requested_queues,
+        )
+        return None
+
+    qname = requested_queues[0]
+    if qname not in ge_queues:
+        logging.error("Unknown queue %s for job %s", qname, job_id)
+        return None
+
+    ge_queue: GridEngineQueue = ge_queues[qname]
+
+    num_tasks = 1
+    tasks_expr = _get(jijle, "tasks")
+
+    if tasks_expr:
+        num_tasks = _parse_tasks(tasks_expr)
+
+    constraints: List[Dict] = [{"slots": slots}] + ge_queue.constraints
+
+    job_resources: Dict[str, str] = {}
+
+    for req in jijle.iter("hard_request"):
+        if req.text is None:
+            logging.warning(
+                "Found null hard_request (%s) for job %s, skipping", req, job_id
+            )
+            continue
+
+        resource_name = req.attrib["name"]
+        complex = ge_queue.complexes.get(resource_name)
+        if not complex:
+            req_value: Any = req.text
+        else:
+            req_value = complex.parse(req.text)
+
+        constraints.append({resource_name: req_value})
+        job_resources[resource_name] = req_value
+
+        if complex and complex.shortcut != complex.name:
+            constraints.append({complex.shortcut: req_value})
+            job_resources[complex.shortcut] = req_value
+
+    job: Job
+
+    pe_elem = jijle.find("requested_pe")
+    if pe_elem is not None:
+        # dealing with parallel jobs (qsub -pe ) is much more complicated
+        job = _pe_job(ge_queue, pe_elem, job_id, constraints, slots, num_tasks)
+        if job is None:
+            return None
+    else:
+        constraints.append(
+            QueueAndHostgroupConstraint(
+                ge_queue.qname, list(ge_queue.hostlist_groups), None
+            )
+        )
+        job = Job(job_id, constraints, iterations=num_tasks)
+
+    job.metadata["gridengine"] = {
+        "resources": job_resources,
+    }
+
+    job.metadata["job_state"] = job_state
+    return job
 
 
 def _pe_job(
