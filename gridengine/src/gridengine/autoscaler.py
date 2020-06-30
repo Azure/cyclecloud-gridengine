@@ -5,14 +5,15 @@ from argparse import ArgumentParser
 from typing import Any, Dict, List, Optional
 
 from hpc.autoscale import hpclogging as logging
+from hpc.autoscale.job import demandcalculator as dcalclib
 from hpc.autoscale.job import demandprinter
 from hpc.autoscale.job.demand import DemandResult
-from hpc.autoscale.job import demandcalculator as dcalclib
 from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.node import Node
-from hpc.autoscale.node.nodehistory import SQLiteNodeHistory
+from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import PriorityQueue
+
 from gridengine import parallel_environments
 from gridengine.driver import GridEngineDriver
 
@@ -22,7 +23,8 @@ _exit_code = 0
 def autoscale_grid_engine(
     config: Dict[str, Any],
     ge_driver: Optional[GridEngineDriver] = None,
-    ctx_handler: DefaultContextHandler = None,
+    ctx_handler: Optional[DefaultContextHandler] = None,
+    node_history: Optional[NodeHistory] = None,
     dry_run: bool = False,
 ) -> DemandResult:
     global _exit_code
@@ -47,7 +49,7 @@ def autoscale_grid_engine(
 
     ge_driver.clean_hosts(invalid_nodes)
 
-    demand_calculator = calculate_demand(config, ge_driver, ctx_handler)
+    demand_calculator = calculate_demand(config, ge_driver, ctx_handler, node_history)
 
     ge_driver.handle_failed_nodes(demand_calculator.node_mgr.get_failed_nodes())
 
@@ -71,7 +73,7 @@ def autoscale_grid_engine(
     if demand_result.new_nodes:
         if not dry_run:
             demand_calculator.bootup()
-    
+
     if not dry_run:
         demand_calculator.update_history()
 
@@ -86,23 +88,25 @@ def autoscale_grid_engine(
 
     timed_out_to_deleted = []
     unmatched_nodes_to_delete = []
-    
+
     if timed_out_idle:
-        logging.info("The following nodes have timed out while booting: %s", timed_out_idle)
+        logging.info(
+            "The following nodes have timed out while booting: %s", timed_out_idle
+        )
         timed_out_to_deleted = ge_driver.handle_boot_timeout(timed_out_idle) or []
-    
+
     if unmatched_for_5_mins:
         logging.info("unmatched_for_5_mins %s", unmatched_for_5_mins)
-        unmatched_nodes_to_delete = ge_driver.handle_draining(unmatched_for_5_mins) or []
-    
+        unmatched_nodes_to_delete = (
+            ge_driver.handle_draining(unmatched_for_5_mins) or []
+        )
+
     nodes_to_delete = timed_out_to_deleted + unmatched_nodes_to_delete
 
     if nodes_to_delete:
         try:
             logging.info(
-                "Deleting %s",
-                nodes_to_delete,
-                idle_timeout,
+                "Deleting %s", nodes_to_delete, idle_timeout,
             )
             delete_result = demand_calculator.delete(nodes_to_delete)
 
@@ -123,23 +127,27 @@ def new_demand_calculator(
     config: Dict,
     ge_driver: Optional[GridEngineDriver] = None,
     ctx_handler: Optional[DefaultContextHandler] = None,
+    node_history: Optional[NodeHistory] = None,
 ) -> DemandCalculator:
     # it has two member variables - jobs
     # ge_driver.jobs - autoscale Jobs
     # ge_driver.scheduler_nodes - autoscale SchedulerNodes
     if ge_driver is None:
         ge_driver = new_driver(config)
-    db_path = config.get("nodehistorydb")
-    if not db_path:
-        db_dir = "/opt/cycle/jetpack/system/bootstrap/gridengine"
-        if not os.path.exists(db_dir):
-            db_dir = os.getcwd()
-        db_path = os.path.join(db_dir, "nodehistory.db")
+
+    if node_history is None:
+        db_path = config.get("nodehistorydb")
+        if not db_path:
+            db_dir = "/opt/cycle/jetpack/system/bootstrap/gridengine"
+            if not os.path.exists(db_dir):
+                db_dir = os.getcwd()
+            db_path = os.path.join(db_dir, "nodehistory.db")
+        node_history = SQLiteNodeHistory(db_path)
 
     return dcalclib.new_demand_calculator(
         config,
         existing_nodes=ge_driver.scheduler_nodes,
-        node_history=SQLiteNodeHistory(db_path),
+        node_history=node_history,
         priority_queue=PriorityQueue(
             ge_driver.node_prioritizer, ge_driver.early_bailout
         ),
@@ -148,11 +156,14 @@ def new_demand_calculator(
 
 def calculate_demand(
     config: Dict,
-    ge_driver: Optional[GridEngineDriver] = None,
+    ge_driver: GridEngineDriver,
     ctx_handler: Optional[DefaultContextHandler] = None,
+    node_history: Optional[NodeHistory] = None,
 ) -> DemandCalculator:
 
-    demand_calculator = new_demand_calculator(config, ge_driver, ctx_handler)
+    demand_calculator = new_demand_calculator(
+        config, ge_driver, ctx_handler, node_history
+    )
     demand_calculator.node_mgr.add_default_resource(
         {},
         "_gridengine_qname",
@@ -197,8 +208,9 @@ def calculate_demand(
             )
 
     for job in ge_driver.jobs:
-        if job.metadata["job_state"] == "running":
+        if job.metadata.get("job_state") == "running":
             continue
+
         if ctx_handler:
             ctx_handler.set_context("[job {}]".format(job.name))
         demand_calculator.add_job(job)
@@ -213,25 +225,26 @@ def print_demand(
     output_format: Optional[str] = None,
 ) -> None:
     # and let's use the demand printer to print the demand_result.
-    output_columns = output_columns or config.get(
-        "output_columns",
-        [
-            "name",
-            "hostname",
-            "job_ids",
-            "exists",
-            "required",
-            "slots",
-            "*slots",
-            "vm_size",
-            "memory",
-            "vcpu_count",
-            "state",
-            "placement_group",
-        ],
-    )
+    if not output_columns:
+        output_columns = config.get(
+            "output_columns",
+            [
+                "name",
+                "hostname",
+                "job_ids",
+                "exists",
+                "required",
+                "slots",
+                "*slots",
+                "vm_size",
+                "memory",
+                "vcpu_count",
+                "state",
+                "placement_group",
+            ],
+        )
 
-    if "all" in output_columns:
+    if "all" in output_columns:  # type: ignore
         output_columns = []
 
     output_format = output_format or "table"

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
+from hpc.autoscale.results import EarlyBailoutResult
 
 
 class MockGridEngineDriver:
@@ -12,9 +13,24 @@ class MockGridEngineDriver:
         self.jobs = jobs
         self.drained: Dict[str, Node] = {}
 
+    def node_prioritizer(self, node: Node) -> int:
+        return 0
+
+    def early_bailout(self, node: Node) -> EarlyBailoutResult:
+        return EarlyBailoutResult("success")
+
     @property
     def current_hostnames(self) -> List[str]:
         return [n.hostname for n in self.scheduler_nodes]
+
+    def preprocess_config(self, config: Dict) -> Dict:
+        return config
+
+    def handle_failed_nodes(self, nodes: List[Node]) -> List[Node]:
+        return []
+
+    def handle_post_join_cluster(self, nodes: List[Node]) -> List[Node]:
+        return nodes
 
     def handle_draining(self, unmatched_nodes: List[Node]) -> None:
         for node in unmatched_nodes:

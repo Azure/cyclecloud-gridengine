@@ -1,11 +1,12 @@
 from typing import Any, List, Optional
 
+from gridengine import autoscaler, parallel_environments
 from hpc.autoscale.ccbindings.mock import MockClusterBinding
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.job.schedulernode import SchedulerNode
+from hpc.autoscale.node.nodehistory import NullNodeHistory
 
-from gridengine import autoscaler, parallel_environments
 from gridengine_test import mock_driver
 
 
@@ -47,7 +48,9 @@ def test_basic() -> None:
 
             config = {"_mock_bindings": self.mock_bindings}
 
-            demand_result = autoscaler.autoscale_grid_engine(config, ge_driver)
+            demand_result = autoscaler.autoscale_grid_engine(
+                config, ge_driver, node_history=NullNodeHistory()
+            )
 
             assert self.expected_unmatched == len(demand_result.unmatched_nodes)
             assert self.expected_matched == len(demand_result.matched_nodes)

@@ -594,11 +594,16 @@ def _query_with_constraints(
 
 
 class ReraiseAssertionInterpreter(code.InteractiveConsole):
-    def __init__(self, locals=None, filename="<console>", reraise=True):
+    def __init__(
+        self,
+        locals: Optional[Dict] = None,
+        filename: str = "<console>",
+        reraise: bool = True,
+    ) -> None:
         code.InteractiveConsole.__init__(self, locals=locals, filename=filename)
         self.reraise = reraise
         hist_file = os.path.expanduser("~/.cyclegehistory")
-        
+
         if os.path.exists(hist_file):
             with open(hist_file) as fr:
                 self.history_lines = fr.readlines()
@@ -614,7 +619,7 @@ class ReraiseAssertionInterpreter(code.InteractiveConsole):
             self.history_fw.flush()
         return line
 
-    def showtraceback(self):
+    def showtraceback(self) -> None:
         if self.reraise:
             _, value, _ = sys.exc_info()
             if isinstance(value, AssertionError) or isinstance(value, SyntaxError):
@@ -634,7 +639,7 @@ def shell(config: Dict) -> None:
         "demand_calc": demand_calc,
         "node_mgr": demand_calc.node_mgr,
         "jobs": ge_driver.jobs,
-        "dbconn": demand_calc.node_history.conn
+        "dbconn": demand_calc.node_history.conn,
     }
     banner = "\nCycleCloud GE Autoscale Shell"
     interpreter = ReraiseAssertionInterpreter(locals=shell_locals)
@@ -699,7 +704,7 @@ def main(argv: Iterable[str] = None) -> None:
         )
         return new_parser
 
-    def str_list(c: str):
+    def str_list(c: str) -> List[str]:
         return c.split(",")
 
     def add_parser_with_columns(name: str, func: Callable) -> ArgumentParser:

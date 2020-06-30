@@ -1,9 +1,8 @@
 from typing import Any, Dict, Optional
 
+from gridengine import driver
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node import constraints
-
-from gridengine import driver
 
 
 def test_custom_parser() -> None:

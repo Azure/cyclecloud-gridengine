@@ -63,10 +63,10 @@ class DeferredDriver(GridEngineDriver):
     def add_nodes_to_cluster(self, nodes: List[Node]) -> List[Node]:
         return self.defer("add_nodes_to_cluster", nodes)
 
-    def handle_failed_nodes(self, nodes) -> List[Node]:
+    def handle_failed_nodes(self, nodes: List[Node]) -> List[Node]:
         return self.defer("handle_failed_nodes", nodes)
 
-    def handle_boot_timeout(self, nodes) -> List[Node]:
+    def handle_boot_timeout(self, nodes: List[Node]) -> List[Node]:
         return self.defer("handle_boot_timeout", nodes)
 
     def clean_hosts(self, invalid_nodes: Optional[List[Node]]) -> None:

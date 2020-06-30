@@ -30,7 +30,9 @@ def set_pe(pe_name: str, pe: Union[Dict[str, str], "ParallelEnvironment"]) -> No
     _PE_CACHE[pe_name] = pe
 
 
-def read_parallel_environments(autoscale_config: Dict) -> Dict[str, "ParallelEnvironment"]:
+def read_parallel_environments(
+    autoscale_config: Dict,
+) -> Dict[str, "ParallelEnvironment"]:
     global _PE_CACHE
     if _PE_CACHE:
         return _PE_CACHE

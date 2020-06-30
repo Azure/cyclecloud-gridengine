@@ -138,7 +138,11 @@ class GridEngineDriver:
                                 ]
                             )
                     if queue_name not in queue_configs:
-                        logging.error("Queue %s does not exist? Ignoring node %s", queue_name, node)
+                        logging.error(
+                            "Queue %s does not exist? Ignoring node %s",
+                            queue_name,
+                            node,
+                        )
                         continue
 
                     queue_config = queue_configs[queue_name]
@@ -499,7 +503,7 @@ def _get_jobs_and_nodes(
 def _parse_scheduler_nodes(
     root: Element, ge_queues: Dict[str, GridEngineQueue]
 ) -> Tuple[List[SchedulerNode], List[Job]]:
-    running_jobs = {}
+    running_jobs: Dict[str, Job] = {}
     schedulers = check_output([QCONF_PATH, "-sss"]).decode().splitlines()
 
     compute_nodes: Dict[str, SchedulerNode] = {}
@@ -572,7 +576,9 @@ def _parse_scheduler_nodes(
             if running_job:
                 if not running_jobs.get(running_job.name):
                     running_jobs[running_job.name] = running_job
-                running_jobs[running_job.name].executing_hostnames.append(compute_node.hostname)
+                running_jobs[running_job.name].executing_hostnames.append(
+                    compute_node.hostname
+                )
             compute_node.assign(_getr(jle, "JB_job_number"))
 
         compute_nodes[compute_node.hostname] = compute_node
