@@ -310,6 +310,15 @@ template "#{gridengineroot}/conf/gridengine.q" do
   )
 end
 
+remote_directory '#{gridengineroot}/hooks' do
+  source 'source_directory'
+  owner 'root'
+  group 'root'
+  mode '0755'
+  action :create
+end
+
+
 cookbook_file "#{gridengineroot}/SGESuspend.sh" do
   source "sbin/SGESuspend.sh"
   owner "root"
