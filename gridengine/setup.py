@@ -8,6 +8,7 @@ from setuptools.command.test import Command
 from setuptools.command.test import test as TestCommand  # noqa: N812
 
 __version__ = "2.0.0"
+CWD = os.path.dirname(os.path.abspath(__file__))
 
 
 class PyTest(TestCommand):
@@ -35,15 +36,15 @@ class PyTest(TestCommand):
 
         check_call(
             ["black", "--check", "src", "test"],
-            cwd=os.path.dirname(os.path.abspath(__file__)),
+            cwd=CWD,
         )
         check_call(
             ["isort", "-c"],
-            cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"),
+            cwd=os.path.join(CWD, "src"),
         )
         check_call(
             ["isort", "-c"],
-            cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "test"),
+            cwd=os.path.join(CWD, "test"),
         )
 
         run_type_checking()
@@ -62,15 +63,15 @@ class Formatter(Command):
 
     def run(self) -> None:
         check_call(
-            ["black", "src", "test"], cwd=os.path.dirname(os.path.abspath(__file__)),
+            ["black", "src", "test"], cwd=CWD,
         )
         check_call(
             ["isort", "-y"],
-            cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"),
+            cwd=os.path.join(CWD, "src"),
         )
         check_call(
             ["isort", "-y"],
-            cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "test"),
+            cwd=os.path.join(CWD, "test"),
         )
         run_type_checking()
 
@@ -83,7 +84,7 @@ def run_type_checking() -> None:
             "--follow-imports=silent",
             "--show-column-numbers",
             "--disallow-untyped-defs",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "test"),
+            os.path.join(CWD, "test"),
         ]
     )
     check_call(
@@ -93,7 +94,7 @@ def run_type_checking() -> None:
             "--follow-imports=silent",
             "--show-column-numbers",
             "--disallow-untyped-defs",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"),
+            os.path.join(CWD, "src"),
         ]
     )
 
