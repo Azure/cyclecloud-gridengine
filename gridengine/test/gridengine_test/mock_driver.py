@@ -1,7 +1,9 @@
 import logging
 from typing import Dict, List, Optional
 
+from gridengine.driver import GENodeQueue
 from hpc.autoscale.job.job import Job
+from hpc.autoscale.job.nodequeue import NodeQueue
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.results import EarlyBailoutResult
@@ -67,3 +69,6 @@ class MockGridEngineDriver:
 
     def clean_hosts(self, invalid_nodes: Optional[List[Node]]) -> None:
         pass
+
+    def new_node_queue(self) -> NodeQueue:
+        return GENodeQueue()

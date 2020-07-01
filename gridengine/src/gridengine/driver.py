@@ -11,6 +11,7 @@ from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
 from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.job.job import Job
+from hpc.autoscale.job.nodequeue import NodeQueue
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.constraints import (
     BaseNodeConstraint,
@@ -439,14 +440,8 @@ class GridEngineDriver:
         """
         return node_mgr
 
-    def node_prioritizer(self, node: Node) -> int:
-        return -node.available["slots"]
-
-    def early_bailout(self, node: Node) -> EarlyBailoutResult:
-        cond = node.available["slots"] == 0
-        if cond:
-            return EarlyBailoutResult("NoMoreSlots", node, reasons=["slots == 0"])
-        return EarlyBailoutResult("success")
+    def new_node_queue(self) -> NodeQueue:
+        return GENodeQueue()
 
     def __str__(self) -> str:
         return "GEDriver(jobs={}, scheduler_nodes={})".format(
@@ -955,6 +950,22 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
         return QueueAndHostgroupConstraint(
             c["qname"], c["hostgroups"], c.get("placement-group")
         )
+
+
+class GENodeQueue(NodeQueue):
+    """
+    Custom NodeQueue that prioritizes nodes by slots and bails out
+    when there are no slots.
+    """
+
+    def node_priority(self, node: Node) -> int:
+        return node.available.get("slots", node.available.get("ncpus", 0))
+
+    def early_bailout(self, node: Node) -> EarlyBailoutResult:
+        prio = self.node_priority(node)
+        if prio > 0:
+            return EarlyBailoutResult("success")
+        return EarlyBailoutResult("NoSlots", node, ["No more slots/ncpus remaining"])
 
 
 register_parser("queue-and-hostgroups", QueueAndHostgroupConstraint.from_dict)

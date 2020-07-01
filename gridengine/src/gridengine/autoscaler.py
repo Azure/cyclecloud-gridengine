@@ -12,7 +12,6 @@ from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
-from hpc.autoscale.util import PriorityQueue
 
 from gridengine import parallel_environments
 from gridengine.driver import GridEngineDriver
@@ -148,9 +147,7 @@ def new_demand_calculator(
         config,
         existing_nodes=ge_driver.scheduler_nodes,
         node_history=node_history,
-        priority_queue=PriorityQueue(
-            ge_driver.node_prioritizer, ge_driver.early_bailout
-        ),
+        node_queue=ge_driver.new_node_queue(),
     )
 
 
