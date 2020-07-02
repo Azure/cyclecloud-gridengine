@@ -311,7 +311,7 @@ template "#{gridengineroot}/conf/gridengine.q" do
 end
 
 remote_directory '#{gridengineroot}/hooks' do
-  source 'source_directory'
+  source 'hooks'
   owner 'root'
   group 'root'
   mode '0755'
