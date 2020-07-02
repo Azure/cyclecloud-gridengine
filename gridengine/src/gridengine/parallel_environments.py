@@ -54,7 +54,7 @@ def read_parallel_environments(
 def read_queue_configs(autoscale_config: Dict) -> List["GridEngineQueue"]:
     qnames = check_output([QCONF_PATH, "-sql"]).decode().split()
     ge_queues = []
-    logging.info("Found %d queues: %s", len(qnames), " ".join(qnames))
+    logging.debug("Found %d queues: %s", len(qnames), " ".join(qnames))
     autoscale_queues_config = autoscale_config.get("gridengine", {}).get("queues", {})
     for qname in qnames:
         lines = check_output([QCONF_PATH, "-sq", qname]).decode().splitlines()

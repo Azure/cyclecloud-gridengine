@@ -250,6 +250,7 @@ autoscale_config = {
   :username => node[:cyclecloud][:config][:username],
   :password => node[:cyclecloud][:config][:password],
   :url => node[:cyclecloud][:config][:web_server],
+  :lock_file => "#{node[:cyclecloud][:bootstrap]}/scalelib.lock",
   :logging => {:config_file => "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf"},
   :default_resources => [ { :select => {}, :name => "slots", :value => "node.vcpu_count"} ],
   :gridengine => {:queues => { },
@@ -423,11 +424,11 @@ bash 'setup virtualenv' do
   source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
   
   jetpack download cyclecloud-api.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-  jetpack download autoscale-0.1.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+  jetpack download cyclecloud-scalelib-0.1.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
   jetpack download cyclecloud-gridengine-2.0.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
   
   pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-api.tar.gz
-  pip install #{node[:cyclecloud][:bootstrap]}/autoscale-0.1.0.tar.gz
+  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-scalelib-0.1.0.tar.gz
   pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-gridengine-2.0.0.tar.gz
   # takes the bootstrap config and amends relevant info so that the next step can properly create our queues.
   python -m gridengine.cli amend_queue_config -c #{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json > #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json

@@ -46,7 +46,7 @@ def test_basic() -> None:
                 self.scheduler_nodes, self.jobs
             )
 
-            config = {"_mock_bindings": self.mock_bindings}
+            config = {"_mock_bindings": self.mock_bindings, "lock_file": None}
 
             demand_result = autoscaler.autoscale_grid_engine(
                 config, ge_driver, node_history=NullNodeHistory()

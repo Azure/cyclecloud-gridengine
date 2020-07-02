@@ -629,8 +629,9 @@ class ReraiseAssertionInterpreter(code.InteractiveConsole):
 
 
 def shell(config: Dict) -> None:
+    ctx = DefaultContextHandler("[interactive-readonly]")
+
     ge_driver = autoscaler.new_driver(config)
-    ctx = DefaultContextHandler("[interactive]")
     demand_calc = autoscaler.new_demand_calculator(config, ge_driver, ctx)
     shell_locals = {
         "config": config,
@@ -661,6 +662,8 @@ def shell(config: Dict) -> None:
                 interpreter.push("readline.add_history('''%s''')" % item.rstrip("\n"))
             else:
                 interpreter.push('readline.add_history("""%s""")' % item.rstrip("\n"))
+        interpreter.push("from hpc.autoscale.job.job import Job\n")
+
     except ImportError:
         banner += (
             "\nWARNING: `readline` is not installed, so autocomplete will not work."
@@ -681,6 +684,7 @@ def main(argv: Iterable[str] = None) -> None:
 
         new_parser = sub_parsers.add_parser(name)
         new_parser.set_defaults(func=func)
+        new_parser.set_defaults(read_only=True)
 
         def parse_config(c: str) -> Dict:
             try:
@@ -721,7 +725,9 @@ def main(argv: Iterable[str] = None) -> None:
         parser.add_argument("--output-format", "-F", type=parse_format)
         return parser
 
-    add_parser_with_columns("autoscale", autoscale)
+    autoscale_parser = add_parser_with_columns("autoscale", autoscale)
+    autoscale_parser.set_defaults(func=autoscale, read_only=False)
+
     add_parser("join_cluster", join_cluster).add_argument(
         "-H", "--hostname", type=str_list, required=True
     )
@@ -760,10 +766,15 @@ def main(argv: Iterable[str] = None) -> None:
         parser.print_help()
         sys.exit(1)
 
+    if args.read_only:
+        args.config["read_only"] = True
+        args.config["lock_file"] = None
+
     kwargs = {}
     for k in dir(args):
-        if k[0].islower() and k != "func":
+        if k[0].islower() and k not in ["read_only", "func"]:
             kwargs[k] = getattr(args, k)
+
     try:
         args.func(**kwargs)
     except Exception as e:

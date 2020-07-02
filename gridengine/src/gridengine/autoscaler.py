@@ -12,6 +12,7 @@ from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
+from hpc.autoscale.util import SingletonLock
 
 from gridengine import parallel_environments
 from gridengine.driver import GridEngineDriver
@@ -27,6 +28,12 @@ def autoscale_grid_engine(
     dry_run: bool = False,
 ) -> DemandResult:
     global _exit_code
+
+    if dry_run:
+        # allow multiple instances
+        config["lock_file"] = None
+        # put in read only mode
+        config["read_only"] = True
 
     # interface to GE, generally by cli
     if ge_driver is None:
@@ -82,8 +89,8 @@ def autoscale_grid_engine(
     boot_timeout = int(config.get("gridengine", {}).get("boot_timeout", 3600))
     logging.fine("Idle timeout is %s", idle_timeout)
 
-    timed_out_idle = demand_calculator.find_booting(at_least=idle_timeout)
-    unmatched_for_5_mins = demand_calculator.find_unmatched_for(at_least=boot_timeout)
+    timed_out_idle = demand_calculator.find_booting(at_least=boot_timeout)
+    unmatched_for_5_mins = demand_calculator.find_unmatched_for(at_least=idle_timeout)
 
     timed_out_to_deleted = []
     unmatched_nodes_to_delete = []
@@ -127,6 +134,7 @@ def new_demand_calculator(
     ge_driver: Optional[GridEngineDriver] = None,
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
+    singleton_lock: Optional[SingletonLock] = None,
 ) -> DemandCalculator:
     # it has two member variables - jobs
     # ge_driver.jobs - autoscale Jobs
@@ -141,13 +149,16 @@ def new_demand_calculator(
             if not os.path.exists(db_dir):
                 db_dir = os.getcwd()
             db_path = os.path.join(db_dir, "nodehistory.db")
-        node_history = SQLiteNodeHistory(db_path)
+
+        read_only = config.get("read_only", False)
+        node_history = SQLiteNodeHistory(db_path, read_only)
 
     return dcalclib.new_demand_calculator(
         config,
         existing_nodes=ge_driver.scheduler_nodes,
         node_history=node_history,
         node_queue=ge_driver.new_node_queue(),
+        singleton_lock=singleton_lock,  # it will handle the none case
     )
 
 

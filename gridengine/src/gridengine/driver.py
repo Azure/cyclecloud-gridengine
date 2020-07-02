@@ -47,6 +47,9 @@ class GridEngineDriver:
         self.jobs = jobs
         self.scheduler_nodes = scheduler_nodes
         self.parallel_envs = read_parallel_environments(autoscale_config)
+        self.read_only = autoscale_config.get("read_only", False)
+        if self.read_only is None:
+            self.read_only = False
 
     def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
         return _get_jobs_and_nodes(self.autoscale_config)
@@ -54,6 +57,9 @@ class GridEngineDriver:
     def handle_draining(
         self, unmatched_nodes: List[SchedulerNode]
     ) -> List[SchedulerNode]:
+        if self.read_only:
+            return []
+
         to_shutdown: List[SchedulerNode] = []
         for node in unmatched_nodes:
             if node.hostname:
@@ -75,6 +81,9 @@ class GridEngineDriver:
         return to_shutdown
 
     def handle_post_delete(self, nodes_to_delete: List[Node]) -> None:
+        if self.read_only:
+            return
+
         logging.getLogger("gridengine.driver").info("handle_post_delete")
 
         fqdns = check_output([QCONF_PATH, "-sh"]).decode().lower().split()
@@ -177,6 +186,9 @@ class GridEngineDriver:
                     logging.warning(str(e))
 
     def handle_undraining(self, matched_nodes: List[Node]) -> List[Node]:
+        if self.read_only:
+            return []
+
         # TODO get list of hosts in @disabled
         logging.getLogger("gridengine.driver").info("handle_undraining")
 
@@ -196,6 +208,9 @@ class GridEngineDriver:
     def handle_join_cluster(self, matched_nodes: List[Node]) -> List[Node]:
         """
         """
+        if self.read_only:
+            return []
+
         logging.getLogger("gridengine.driver").info("handle_join_cluster")
 
         # TODO rethink this RDH
@@ -269,21 +284,33 @@ class GridEngineDriver:
         """
             feel free to set complexes / resources on the node etc.
         """
+        if self.read_only:
+            return []
+
         return nodes
 
     def handle_failed_nodes(self, nodes: List[Node]) -> List[Node]:
+        if self.read_only:
+            return []
+
         if not nodes:
             return nodes
         logging.error("The following nodes are in a failed state: %s", nodes)
         return nodes
 
     def handle_boot_timeout(self, nodes: List[Node]) -> List[Node]:
+        if self.read_only:
+            return []
+
         if not nodes:
             return nodes
         logging.error("The following nodes have not booted in time: %s", nodes)
         return nodes
 
     def add_nodes_to_cluster(self, nodes: List[Node]) -> List[Node]:
+        if self.read_only:
+            return []
+
         logging.getLogger("gridengine.driver").info("add_nodes_to_cluster")
 
         if not nodes:
