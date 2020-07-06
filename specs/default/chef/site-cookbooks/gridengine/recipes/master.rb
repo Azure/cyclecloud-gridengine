@@ -318,18 +318,39 @@ cookbook_file "#{gridengineroot}/SGETerm.sh" do
   only_if "test -d #{gridengineroot}"
 end
 
-%w( slot_type onsched placement_group exclusive ).each do |confFile|
-  cookbook_file "#{gridengineroot}/conf/complex_#{confFile}" do
-    source "conf/complex_#{confFile}"
+
+if node[:gridengine][:make]=='ge'
+  # UGE can change complexes between releases
+  %w( slot_type onsched placement_group exclusive nodearray ).each do |confFile|
+    cookbook_file "#{gridengineroot}/conf/complex_#{confFile}" do
+      source "conf/complex_#{confFile}"
+      owner "root"
+      group "root"
+      mode "0755"
+      only_if "test -d #{gridengineroot}/conf"
+    end
+
+    execute "set #{confFile} complex" do
+      command ". /etc/cluster-setup.sh && qconf -Ace #{gridengineroot}/conf/complex_#{confFile} && touch #{chefstate}/gridengine.setcomplex.#{confFile}.done"
+      creates "#{chefstate}/gridengine.setcomplex.#{confFile}.done"
+      action :run
+    end
+  end
+elsif node[:gridengine][:make]=='sge'
+  # OGS does't have qconf -Ace options 
+  complex_file = "conf/complexes"
+
+  cookbook_file "#{gridengineroot}/conf/complexes" do
+    source complex_file
     owner "root"
     group "root"
     mode "0755"
-    only_if "test -d #{gridengineroot}/conf"
+    action :create
   end
 
-  execute "set #{confFile} complex" do
-    command ". /etc/cluster-setup.sh && qconf -Ace #{gridengineroot}/conf/complex_#{confFile} && touch #{chefstate}/gridengine.setcomplex.#{confFile}.done"
-    creates "#{chefstate}/gridengine.setcomplex.#{confFile}.done"
+  execute "set complexes" do
+    command ". /etc/cluster-setup.sh && qconf -Mc #{gridengineroot}/conf/complexes && touch #{chefstate}/gridengine.setcomplexes.done"
+    creates "#{chefstate}/gridengine.setcomplexes.done"
     action :run
   end
 end

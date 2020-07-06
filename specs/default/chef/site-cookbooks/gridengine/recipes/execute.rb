@@ -111,7 +111,7 @@ execute "gridengine_enable_host" do
     action :nothing
 end
 
-service 'gridengineexecd' do
+service 'sgeexecd' do
   action [:enable, :start]
   only_if { ::File.exist?('/etc/gridengineexecd.installed') }
   not_if { pidfile_running? ::File.join(gridengineroot, 'default', 'spool', node[:hostname], 'execd.pid') }
@@ -158,7 +158,7 @@ execute "configure_slot_attributes" do
   only_if { ::File.exist?('/etc/gridengineexecd.installed') }
   creates "/etc/gridengineexecd.configured"
 
-  notifies :start, 'service[gridengineexecd]', :immediately
+  notifies :start, 'service[sgeexecd]', :immediately
   notifies :run, 'execute[gridengine_enable_host]', :immediately
 end
 
