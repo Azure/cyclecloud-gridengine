@@ -219,14 +219,6 @@ template "#{gridengineroot}/conf/exec" do
   )
 end
 
-template "#{gridengineroot}/conf/mpislots" do
-  source "mpislots.erb"
-  owner "root"
-  group "root"
-  mode "0755"
-end
-
-
 autoscale_config = {
   :cluster_name => node[:cyclecloud][:cluster][:name],
   :username => node[:cyclecloud][:config][:username],
@@ -256,31 +248,6 @@ cookbook_file "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf" do
   mode '0644'
   action :create
   not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf")}
-end
-
-template "#{gridengineroot}/conf/mpi" do
-  source "mpi.erb"
-  owner "root"
-  group "root"
-  mode "0755"
-  variables(
-    :gridengineroot => gridengineroot
-  )
-end
-
-template "#{gridengineroot}/conf/smpslots" do
-  source "smpslots.erb"
-  owner "root"
-  group "root"
-  mode "0755"
-end
-
-cookbook_file "#{gridengineroot}/conf/pecfg" do
-  source "conf/pecfg"
-  owner "root"
-  group "root"
-  mode "0755"
-  action :create
 end
 
 template "#{gridengineroot}/conf/gridengine.q" do
@@ -355,8 +322,33 @@ elsif node[:gridengine][:make]=='sge'
   end
 end
 
+cookbook_file "#{gridengineroot}/conf/pecfg" do
+  source "conf/pecfg"
+  owner "root"
+  group "root"
+  mode "0755"
+  action :create
+end
 
-%w( mpi mpislots smpslots ).each do |confFile|
+pe_list = [ "make", "mpi", "mpislots", "smpslots"]
+
+file "#{gridengineroot}/conf/pecfg" do
+  content "pe_list #{pe_list.join(' ')}"
+  mode "0755"
+end
+
+pe_list.each do |confFile|
+
+  template "#{gridengineroot}/conf/#{confFile}" do
+    source "#{confFile}.erb"
+    owner "root"
+    group "root"
+    mode "0755"
+    variables(
+      :gridengineroot => gridengineroot
+    )
+  end 
+
   execute "Add the conf file: " + confFile do
     command ". /etc/cluster-setup.sh && qconf -Ap #{File.join(gridengineroot, 'conf', confFile)}"
     not_if ". /etc/cluster-setup.sh && qconf -spl | grep #{confFile}"
