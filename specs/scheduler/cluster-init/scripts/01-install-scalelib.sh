@@ -11,11 +11,10 @@ source $BOOTSTRAP/gridenginevenv/bin/activate
 # https://cc-8-dev.westus2.cloudapp.azure.com/static/tools/cyclecloud_api-8.0.1-py2.py3-none-any.whl
 wget --no-check-certificate $(jetpack config cyclecloud.config.web_server)/static/tools/$API_FILE_NAME -O $BOOTSTRAP/$API_FILE_NAME
 #jetpack download cyclecloud_api-8.0.1-py2.py3-none-any.whl --project gridengine #{node[:cyclecloud][:bootstrap]}/
-#jetpack download autoscale-0.1.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+jetpack download cyclecloud-scalelib-0.1.1.tar.gz --project gridengine $BOOTSTRAP/
 jetpack download cyclecloud-gridengine-2.0.0.tar.gz --project gridengine $BOOTSTRAP/
 
 pip install $BOOTSTRAP/$API_FILE_NAME
-cp /tmp/cyclecloud-scalelib-0.1.1.tar.gz $BOOTSTRAP/cyclecloud-scalelib-0.1.1.tar.gz
 pip install $BOOTSTRAP/cyclecloud-scalelib-0.1.1.tar.gz
 pip install $BOOTSTRAP/cyclecloud-gridengine-2.0.0.tar.gz
 # takes the bootstrap config and amends relevant info so that the next step can properly create our queues.
