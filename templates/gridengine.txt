@@ -22,16 +22,15 @@ Autoscale = $Autoscale
         [[[cluster-init cyclecloud/gridengine:default]]]
         Optional = true
 
-    [[node master]]
-    MachineType = $MasterMachineType
-    ImageName = $MasterImageName
+    [[node scheduler]]
+    MachineType = $SchedulerMachineType
+    ImageName = $SchedulerImageName
     IsReturnProxy = $ReturnProxy
-    AdditionalClusterInitSpecs = $MasterClusterInitSpecs
+    AdditionalClusterInitSpecs = $SchedulerClusterInitSpecs
     
         [[[configuration]]]
 
-        [[[cluster-init cyclecloud/cyclecloud-scalelib:default]]]
-        [[[cluster-init cyclecloud/gridengine:master]]]
+        [[[cluster-init cyclecloud/gridengine:scheduler]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $UsePublicNetwork
@@ -96,7 +95,7 @@ Order = 1
 Order = 10
 
     [[parameters Virtual Machines ]]
-    Description = "The cluster, in this case, has two roles: the scheduler master-node with shared filer and the execute hosts. Configure which VM types to use based on the requirements of your application."
+    Description = "The cluster, in this case, has two roles: the scheduler with shared filer and the execute hosts. Configure which VM types to use based on the requirements of your application."
     Order = 20
 
         [[[parameter Region]]]
@@ -105,9 +104,9 @@ Order = 10
         ParameterType = Cloud.Region
         DefaultValue = westus2
 
-        [[[parameter MasterMachineType]]]
-        Label = Master VM Type
-        Description = The VM type for scheduler master and shared filer.
+        [[[parameter SchedulerMachineType]]]
+        Label = Scheduler VM Type
+        Description = The VM type for scheduler and shared filer.
         ParameterType = Cloud.MachineType
         DefaultValue = Standard_D12_v2
 
@@ -197,8 +196,8 @@ Order = 20
     Description = "Specify the scheduling software, and base OS installed on all nodes, and optionally the cluster-init and chef versions from your Locker."
     Order = 10
 
-        [[[parameter MasterImageName]]]
-        Label = Master Base OS
+        [[[parameter SchedulerImageName]]]
+        Label = Scheduler Base OS
         ParameterType = Cloud.Image
         Config.OS = linux
         DefaultValue = cycle.image.centos7
@@ -215,10 +214,10 @@ Order = 20
         Config.OS = linux
         DefaultValue = cycle.image.centos7
 
-        [[[parameter MasterClusterInitSpecs]]]
-        Label = Master Cluster-Init
+        [[[parameter SchedulerClusterInitSpecs]]]
+        Label = Scheduler Cluster-Init
         DefaultValue = =undefined
-        Description = Cluster init specs to apply to the master node
+        Description = Cluster init specs to apply to the scheduler node
         ParameterType = Cloud.ClusterInitSpecs
     
         [[[parameter HPCClusterInitSpecs]]]
@@ -247,7 +246,7 @@ Order = 20
         Label = Public Head Node
         DefaultValue = true
         ParameterType = Boolean
-        Config.Label = Access master node from the Internet
+        Config.Label = Access scheduler node from the Internet
 
         [[[parameter ExecuteNodesPublic]]]
         Label = Public Execute
