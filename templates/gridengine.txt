@@ -66,7 +66,8 @@ Autoscale = $Autoscale
     ImageName = $HTCImageName
     MaxCoreCount = $MaxHTCCoreCount
 
-    Interruptible = $UseLowPrio
+    Interruptible = $HTCUseLowPrio
+    MaxPrice = $HTCSpotMaxPrice
     AdditionalClusterInitSpecs = $HTCClusterInitSpecs
 
 
@@ -160,11 +161,19 @@ Order = 10
         Config.MaxValue = 1000
         Config.IntegerOnly = true
 
-        [[[parameter UseLowPrio]]]
-        Label = HTC Low Priority
+        [[[parameter HTCUseLowPrio]]]
+        Label = Spot
         DefaultValue = false
         Widget.Plugin = pico.form.BooleanCheckBox
         Widget.Label = Use low priority instances for HTC hosts
+
+        [[[parameter HTCSpotMaxPrice]]]
+        Label = Max Price
+        DefaultValue = -1
+        Description = Max price for Spot VMs in USD (value of -1 will not evict based on price)
+        Config.Plugin = pico.form.NumberTextBox
+        Conditions.Excluded := HTCUseLowPrio isnt true
+        Config.MinValue = -1
 
     [[parameters Networking]]
     Order = 40
