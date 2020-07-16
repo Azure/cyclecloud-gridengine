@@ -3,6 +3,7 @@ default[:gridengine][:version] = "2011.11"
 default[:gridengine][:root] = "/sched/sge/sge-2011.11"
 default[:gridengine][:package_extension] = "tar.gz"
 default[:gridengine][:use_external_download] = false
+default[:gridengine][:remote_prefix] = nil
 
 default[:gridengine][:idle_timeout] = 300
 

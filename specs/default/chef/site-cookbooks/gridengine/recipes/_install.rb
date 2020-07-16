@@ -8,7 +8,7 @@
 sgemake = node[:gridengine][:make]     # ge, sge
 sgever = node[:gridengine][:version]   # 8.2.0-demo (ge), 8.2.1 (ge), 6_2u6 (sge), 2011.11 (sge, 8.1.8 (sge)
 gridengineroot = node[:gridengine][:root] 
-demoaccessuri = node[:gridengine][:demo_base_url]
+demoprefix = node[:gridengine][:remote_prefix] 
 
 # This is a hash for the gridengine install files "sgebins"
 # The default is the official release from Univa. These are named "bin-lx-amd64" and "common"
@@ -30,7 +30,7 @@ sgebins[sgemake].each do |arch|
     end 
 
     remote_file "#{node[:jetpack][:downloads]}/#{sgemake}-#{sgever}-#{arch}.#{sgeext}" do
-      source "#{demoaccessuri}#{sgemake}-#{sgever}-#{arch}.#{sgeext}"
+      source "#{Base64.decode64(demoprefix)}#{sgemake}-#{sgever}-#{arch}.#{sgeext}"
       action :create
     end
   else
