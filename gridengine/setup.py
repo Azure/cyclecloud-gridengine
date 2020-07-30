@@ -128,8 +128,7 @@ setup(
         ]
     },
     scripts=["bin/azge"],
-    install_requires=["requests == 2.21.0", "typing_extensions"]
-    + ["certifi==2019.3.9", "chardet==3.0.4", "idna==2.8", "urllib3==1.24.1"],  # noqa: W503
+    install_requires=["typing_extensions"],
     tests_require=["pytest==3.2.3"],
     cmdclass={"test": PyTest, "format": Formatter, "types": TypeChecking},
     url="http://www.cyclecomputing.com",

@@ -8,6 +8,7 @@
 chefstate = node[:cyclecloud][:chefstate]
 
 directory "#{node[:cyclecloud][:bootstrap]}/gridengine"
+directory "/opt/cycle/gridengine"
 
 slot_type = node[:gridengine][:slot_type] || "scheduler"
 
@@ -219,37 +220,6 @@ template "#{gridengineroot}/conf/exec" do
   )
 end
 
-autoscale_config = {
-  :cluster_name => node[:cyclecloud][:cluster][:name],
-  :username => node[:cyclecloud][:config][:username],
-  :password => node[:cyclecloud][:config][:password],
-  :url => node[:cyclecloud][:config][:web_server],
-  :lock_file => "#{node[:cyclecloud][:bootstrap]}/scalelib.lock",
-  :logging => {:config_file => "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf"},
-  :default_resources => [ { :select => {}, :name => "slots", :value => "node.vcpu_count"} ],
-  :gridengine => {:queues => { },
-                  :idle_timeout => node[:gridengine][:idle_timeout]}
-}
-
-# need this to allow us to call amend_queue_config
-file "#{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json" do
-  mode "0644"
-  owner "root"
-  group "root"
-  content Chef::JSONCompat.to_json_pretty(autoscale_config)
-  not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json")}
-end
-
-
-cookbook_file "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf" do
-  source "conf/logging.conf"
-  owner 'root'
-  group 'root'
-  mode '0644'
-  action :create
-  not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf")}
-end
-
 template "#{gridengineroot}/conf/gridengine.q" do
   source "gridengine.q.erb"
   owner "root"
@@ -416,47 +386,46 @@ jetpack_send "Registering QMaster for monitoring." do
 end
 
 
-package 'python3' do
-  action :install
-  
+relevant_complexes = node[:gridengine][:relevant_complexes] || ["slots", "slot_type"]
+relevant_complexes_str = relevant_complexes.join(",")
+
+cookbook_file "/opt/cycle/gridengine/logging.conf" do
+  source "conf/logging.conf"
+  owner 'root'
+  group 'root'
+  mode '0644'
+  action :create
+  not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf")}
 end
 
-#bash 'setup virtualenv' do
-#  code <<-EOH
-#  set -e
-#  source /etc/profile.d/sgesettings.sh
-#  python3 -m pip install virtualenv
-#  python3 -m virtualenv #{node[:cyclecloud][:bootstrap]}/gridenginevenv
-#  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
-#  
-#  jetpack download cyclecloud_api-8.0.1-py2.py3-none-any.whl --project gridengine #{node[:cyclecloud][:bootstrap]}/
-#  jetpack download autoscale-0.1.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-#  jetpack download cyclecloud-gridengine-2.0.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-#  
-#  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud_api-8.0.1-py2.py3-none-any.whl
-#  pip install #{node[:cyclecloud][:bootstrap]}/autoscale-0.1.0.tar.gz
-#  pip install #{node[:cyclecloud][:bootstrap]}/cyclecloud-gridengine-2.0.0.tar.gz
-#  # takes the bootstrap config and amends relevant info so that the next step can properly create our queues.
-#  python -m gridengine.cli amend_queue_config -c #{node[:cyclecloud][:bootstrap]}/gridengine/bootstrap.json > #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
-#  python -m gridengine.cli create_queues -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
-#  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
-#  EOH
-#  action :run
-#  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
-#end
-#
-#
-#file "#{node[:cyclecloud][:bootstrap]}/gridengine/gridengine_autoscale.sh" do
-#  content <<-EOF#!/bin/env bash
-#  set -e
-#  source #{node[:cyclecloud][:bootstrap]}/gridenginevenv/bin/activate
-#  # -c is not required here, leaving so it is obvious what config is used when debugging
-#  python -m gridengine.cli autoscale -c #{node[:cyclecloud][:bootstrap]}/gridengine/autoscale.json
-#  EOF
-#  owner "root"
-#  group "root"
-#  mode "0755"
-#  action :create
-#end
+bash 'setup virtualenv' do
+  code <<-EOH
+  set -e
+  source /etc/profile.d/sgesettings.sh
+  jetpack download cyclecloud-gridengine-pkg-2.0.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
+
+  cd #{node[:cyclecloud][:bootstrap]}/
+  tar xzf cyclecloud-gridengine-pkg-2.0.0.tar.gz
+  cd cyclecloud-gridengine/
+  INSTALLDIR=/opt/cycle/gridengine
+  mkdir -p $INSTALLDIR/venv
+  ./install.sh --install-python3 --venv $INSTALLDIR/venv
+  azge initconfig --cluster-name #{node[:cyclecloud][:cluster][:name]} \
+                  --username     #{node[:cyclecloud][:config][:username]} \
+                  --password     #{node[:cyclecloud][:config][:password]} \
+                  --url          #{node[:cyclecloud][:config][:web_server]} \
+                  --lock-file    $INSTALLDIR/scalelib.lock \
+                  --log-config   $INSTALLDIR/logging.conf \
+                  --default-resource '{"select": {}, "name": "slots", "value": "node.vcpu_count"}' \
+                  --idle-timeout #{node[:gridengine][:idle_timeout]} \
+                  --relevant-complexes #{relevant_complexes_str} > $INSTALLDIR/autoscale.json
+
+  # properly create our queues.
+  azge create_queues -c $INSTALLDIR/autoscale.json
+  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
+  EOH
+  action :run
+  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
+end
 
 include_recipe "gridengine::autostart"

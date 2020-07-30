@@ -1,4 +1,5 @@
 import code
+import io
 import json
 import os
 import socket
@@ -35,6 +36,7 @@ def autoscale(
     output_columns: Optional[List[str]] = None,
     output_format: Optional[str] = None,
 ) -> None:
+    """Runs actual autoscale process"""
     ctx_handler = register_result_handler(DefaultContextHandler("[initialization]"))
     if output_columns:
         config["output_columns"] = output_columns
@@ -46,6 +48,7 @@ def autoscale(
 
 
 def join_cluster(config: Dict, hostnames: List[str], node_names: List[str]) -> None:
+    """Allow nodes to join the cluster"""
     ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
     ge_driver.add_nodes_to_cluster(nodes)
 
@@ -53,6 +56,10 @@ def join_cluster(config: Dict, hostnames: List[str], node_names: List[str]) -> N
 def drain_node(
     config: Dict, hostnames: List[str], node_names: List[str], force: bool = False
 ) -> None:
+    """
+        Prevent new jobs from running on the node so that it can be safely taken
+        offline
+    """
     ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
     ge_driver.handle_draining(nodes)
 
@@ -60,6 +67,7 @@ def drain_node(
 def delete_nodes(
     config: Dict, hostnames: List[str], node_names: List[str], force: bool = False
 ) -> None:
+    """Deletes node, including draining post delete handling"""
     ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
 
     if not force:
@@ -144,6 +152,7 @@ def _master_hostname(config: Dict) -> str:
 
 
 def create_queues(config: Dict) -> None:
+    """Creates GE queues based on Configuration.gridengine.queues"""
     check_call(
         [
             QCONF_PATH,
@@ -362,30 +371,37 @@ def _create_hostgroup(master_hostname: str, queue_name: str, hostgroup: str) -> 
 
 def amend_queue_config(config: Dict, writer: TextIO = sys.stdout) -> None:
     """
-    ...
-    "gridengine": {
-    "queues": {
-      "hpc.q": {
-        "constraints": [{"node.nodearray": "hpc"}],
-        "hostlist": "NONE",
-        "pes": {
-          "make": {"hostgroups": ["@hpc.q_make"]},
-          "mpi": {"hostgroups": ["@hpc.q_mpi"]},
-          "mpislots": {"hostgroups": ["@hpc.q_mpislots"]},
-          "smpslots": {"hostgroups": []}}},
-      "htc.q": {
-        "constraints": [{"node.nodearray": "htc"}],
-        "hostlist": "@htc.q",
-        "pes": {
-          "smpslots": { "hostgroups": [] },
-          "make": { "hostgroups": [] }
-        }}}}}
+    Used during initialization to create the default autoscale queue config.
     """
+
+    # """
+    # ...
+    # "gridengine": {
+    # "queues": {
+    #   "hpc.q": {
+    #     "constraints": [{"node.nodearray": "hpc"}],
+    #     "hostlist": "NONE",
+    #     "pes": {
+    #       "make": {"hostgroups": ["@hpc.q_make"]},
+    #       "mpi": {"hostgroups": ["@hpc.q_mpi"]},
+    #       "mpislots": {"hostgroups": ["@hpc.q_mpislots"]},
+    #       "smpslots": {"hostgroups": []}}},
+    #   "htc.q": {
+    #     "constraints": [{"node.nodearray": "htc"}],
+    #     "hostlist": "@htc.q",
+    #     "pes": {
+    #       "smpslots": { "hostgroups": [] },
+    #       "make": { "hostgroups": [] }
+    #     }}}}}
+    # """
 
     node_mgr = new_node_manager(config)
     new_config = deepcopy(config)
     new_config["gridengine"] = ge_config = new_config.get("gridengine", {})
     ge_config["queues"] = queues = ge_config.get("queues", {})
+    assert isinstance(
+        queues, dict
+    ), "Invalid config. gridengine.queues must be a dictionary."
 
     by_nodearray = partition(node_mgr.get_buckets(), lambda b: b.nodearray)
     system_pes: Dict[
@@ -438,6 +454,7 @@ def demand(
     output_columns: Optional[List[str]] = None,
     output_format: Optional[str] = None,
 ) -> None:
+    """Runs autoscale in dry run mode to see the demand for new nodes"""
     ge_driver = autoscaler.new_driver(config)
     demand_calc = autoscaler.calculate_demand(config, ge_driver)
     demand_result = demand_calc.finish()
@@ -451,19 +468,26 @@ def nodes(
     output_columns: Optional[List[str]] = None,
     output_format: Optional[str] = None,
 ) -> None:
+    """Query nodes"""
     ge_driver = autoscaler.new_driver(config)
-    node_mgr = new_node_manager(config, existing_nodes=ge_driver.scheduler_nodes)
-    filtered = _query_with_constraints(config, constraint_expr, node_mgr.get_nodes())
+    dcalc = autoscaler.new_demand_calculator(config, ge_driver)
+    # node_mgr = new_node_manager(config, existing_nodes=ge_driver.scheduler_nodes)
+    filtered = _query_with_constraints(
+        config, constraint_expr, dcalc.node_mgr.get_nodes()
+    )
+
     demand_result = DemandResult([], filtered, [], [])
     autoscaler.print_demand(config, demand_result, output_columns)
 
 
 def jobs(config: Dict) -> None:
+    """Writes out Job objects as json"""
     ge_driver = autoscaler.new_driver(config)
     json.dump(ge_driver.jobs, sys.stdout, indent=2, default=lambda x: x.to_dict())
 
 
 def scheduler_nodes(config: Dict) -> None:
+    """Writes out SchedulerNode objects as json"""
     ge_driver = autoscaler.new_driver(config)
     json.dump(
         ge_driver.scheduler_nodes, sys.stdout, indent=2, default=lambda x: x.to_dict()
@@ -471,12 +495,14 @@ def scheduler_nodes(config: Dict) -> None:
 
 
 def jobs_and_nodes(config: Dict) -> None:
+    """Writes out SchedulerNode and Job objects as json - simultaneously to avoid race"""
     ge_driver = autoscaler.new_driver(config)
     to_dump = {"jobs": ge_driver.jobs, "nodes": ge_driver.scheduler_nodes}
     json.dump(to_dump, sys.stdout, indent=2, default=lambda x: x.to_dict())
 
 
 def complexes(config: Dict, include_irrelevant: bool = False) -> None:
+    """Prints out, by default, only relevant complexes"""
     relevant: typing.Optional[typing.Set[str]]
     if include_irrelevant:
         ge_config = config.get("gridengine", {})
@@ -502,6 +528,7 @@ def buckets(
     output_columns: Optional[List[str]] = None,
     output_format: Optional[str] = None,
 ) -> None:
+    """Prints out autoscale bucket information, like limits etc"""
     # ge_driver = autoscaler.new_driver(config)
     node_mgr = new_node_manager(config)
     specified_output_columns = output_columns
@@ -549,6 +576,33 @@ def resources(config: Dict, constraint_expr: str) -> None:
         columns.update(set(node.resources.keys()))
         columns.update(set(node.resources.keys()))
     config["output_columns"]
+
+
+def initconfig(**config: Dict) -> None:
+    #     autoscale_config = {
+    #   :cluster_name => node[:cyclecloud][:cluster][:name],
+    #   :username => node[:cyclecloud][:config][:username],
+    #   :password => node[:cyclecloud][:config][:password],
+    #   :url => node[:cyclecloud][:config][:web_server],
+    #   :lock_file => "#{node[:cyclecloud][:bootstrap]}/scalelib.lock",
+    #   :logging => {:config_file => "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf"},
+    #   :default_resources => [ { :select => {}, :name => "slots", :value => "node.vcpu_count"} ],
+    #   :gridengine => {:queues => { },
+    #                   :relevant_complexes =>relevant_complexes,
+    #                   :idle_timeout => node[:gridengine][:idle_timeout]}
+    # }
+    if "gridengine" not in config:
+        config["gridengine"] = {}
+
+    for key in list(config.keys()):
+
+        if "__" in key:
+            parent, child = key.split("__")
+            if parent not in config:
+                config[parent] = {}
+            config[parent][child] = config.pop(key)
+
+    amend_queue_config(config, sys.stdout)
 
 
 def _parse_contraint(constraint_expr: str) -> List[NodeConstraint]:
@@ -629,10 +683,24 @@ class ReraiseAssertionInterpreter(code.InteractiveConsole):
 
 
 def shell(config: Dict) -> None:
+    """
+        Provides read only interactive shell. type gehelp()
+        in the shell for more information
+    """
     ctx = DefaultContextHandler("[interactive-readonly]")
 
     ge_driver = autoscaler.new_driver(config)
     demand_calc = autoscaler.new_demand_calculator(config, ge_driver, ctx)
+
+    def gehelp() -> None:
+        print("config       - dict representing autoscale configuration.")
+        print("dbconn       - Read-only SQLite conn to node history")
+        print("demand_calc  - DemandCalculator")
+        print("ge_driver    - GEDriver object.")
+        print("jobs         - List[Job] from ge_driver")
+        print("node_mgr     - NodeManager")
+        print("logging      - HPCLogging module")
+
     shell_locals = {
         "config": config,
         "ctx": ctx,
@@ -641,6 +709,7 @@ def shell(config: Dict) -> None:
         "node_mgr": demand_calc.node_mgr,
         "jobs": ge_driver.jobs,
         "dbconn": demand_calc.node_history.conn,
+        "gehelp": gehelp,
     }
     banner = "\nCycleCloud GE Autoscale Shell"
     interpreter = ReraiseAssertionInterpreter(locals=shell_locals)
@@ -663,6 +732,7 @@ def shell(config: Dict) -> None:
             else:
                 interpreter.push('readline.add_history("""%s""")' % item.rstrip("\n"))
         interpreter.push("from hpc.autoscale.job.job import Job\n")
+        interpreter.push("from hpc.autoscale import hpclogging as logging\n")
 
     except ImportError:
         banner += (
@@ -673,18 +743,33 @@ def shell(config: Dict) -> None:
 
 
 def main(argv: Iterable[str] = None) -> None:
+    default_install_dir = os.path.join("/", "opt", "cycle", "gridengine")
+
     parser = ArgumentParser()
     sub_parsers = parser.add_subparsers()
 
-    def add_parser(name: str, func: Callable) -> ArgumentParser:
+    def csv_list(x: str) -> List[str]:
+        return [x.strip() for x in x.split(",")]
+
+    help_msg = io.StringIO()
+
+    def add_parser(
+        name: str, func: Callable, read_only: bool = True, skip_config: bool = False
+    ) -> ArgumentParser:
+        doc_str = (func.__doc__ or "").strip()
+        doc_str = " ".join([x.strip() for x in doc_str.splitlines()])
+        help_msg.write("\n    {:20} - {}".format(name, doc_str))
+
         default_config: Optional[str]
-        default_config = "/opt/cycle/jetpack/system/bootstrap/gridengine/autoscale.json"
+        default_config = os.path.join(default_install_dir, "autoscale.json")
         if not os.path.exists(default_config):
             default_config = None
 
         new_parser = sub_parsers.add_parser(name)
-        new_parser.set_defaults(func=func)
-        new_parser.set_defaults(read_only=True)
+        new_parser.set_defaults(func=func, read_only=read_only)
+
+        if skip_config:
+            return new_parser
 
         def parse_config(c: str) -> Dict:
             try:
@@ -711,8 +796,10 @@ def main(argv: Iterable[str] = None) -> None:
     def str_list(c: str) -> List[str]:
         return c.split(",")
 
-    def add_parser_with_columns(name: str, func: Callable) -> ArgumentParser:
-        parser = add_parser(name, func)
+    def add_parser_with_columns(
+        name: str, func: Callable, read_only: bool = True
+    ) -> ArgumentParser:
+        parser = add_parser(name, func, read_only)
 
         def parse_format(c: str) -> str:
             c = c.lower()
@@ -725,42 +812,82 @@ def main(argv: Iterable[str] = None) -> None:
         parser.add_argument("--output-format", "-F", type=parse_format)
         return parser
 
-    autoscale_parser = add_parser_with_columns("autoscale", autoscale)
-    autoscale_parser.set_defaults(func=autoscale, read_only=False)
-
-    add_parser("join_cluster", join_cluster).add_argument(
-        "-H", "--hostname", type=str_list, required=True
-    )
-
-    delete_parser = add_parser("delete_nodes", delete_nodes)
-    delete_parser.add_argument("-H", "--hostnames", type=str_list, default=[])
-    delete_parser.add_argument("-N", "--node-names", type=str_list, default=[])
-    delete_parser.add_argument("--force", action="store_true", default=False)
-
-    add_parser("drain_node", drain_node).add_argument("-H", "--hostname", required=True)
-
-    add_parser("amend_queue_config", amend_queue_config)
-    add_parser("create_queues", create_queues)
-    add_parser("complexes", complexes).add_argument(
-        "-a", "--include-irrelevant", action="store_true", default=False
-    )
-    add_parser_with_columns("demand", demand).add_argument(
-        "--jobs", "-j", default=None, required=False
-    )
-    add_parser_with_columns("nodes", nodes).add_argument(
-        "--constraint-expr", "-C", default="[]"
-    )
-
-    add_parser("jobs", jobs)
-    add_parser("scheduler_nodes", scheduler_nodes)
-    add_parser("jobs_and_nodes", jobs_and_nodes)
+    add_parser_with_columns("autoscale", autoscale, read_only=False)
 
     add_parser_with_columns("buckets", buckets).add_argument(
         "--constraint-expr", "-C", default="[]"
     )
 
+    add_parser("complexes", complexes).add_argument(
+        "-a", "--include-irrelevant", action="store_true", default=False
+    )
+
+    delete_parser = add_parser("delete_nodes", delete_nodes, read_only=False)
+    delete_parser.add_argument("-H", "--hostnames", type=str_list, default=[])
+    delete_parser.add_argument("-N", "--node-names", type=str_list, default=[])
+    delete_parser.add_argument("--force", action="store_true", default=False)
+
+    add_parser_with_columns("demand", demand).add_argument(
+        "--jobs", "-j", default=None, required=False
+    )
+
+    add_parser("drain_node", drain_node, read_only=False).add_argument(
+        "-H", "--hostname", required=True
+    )
+
+    initconfig_parser = add_parser(
+        "initconfig", initconfig, read_only=False, skip_config=True
+    )
+
+    initconfig_parser.add_argument("--cluster-name", required=True)
+    initconfig_parser.add_argument("--username", required=True)
+    initconfig_parser.add_argument("--password")
+    initconfig_parser.add_argument("--url", required=True)
+    initconfig_parser.add_argument(
+        "--log-config",
+        default=os.path.join(default_install_dir, "logging.conf"),
+        dest="logging__config_file",
+    )
+    initconfig_parser.add_argument(
+        "--lock-file", default=os.path.join(default_install_dir, "scalelib.lock")
+    )
+    initconfig_parser.add_argument(
+        "--default-resource",
+        type=json.loads,
+        action="append",
+        default=[],
+        dest="default_resources",
+    )
+    initconfig_parser.add_argument(
+        "--relevant-complexes",
+        default=["slots", "slot_type", "exclusive"],
+        type=csv_list,
+        dest="gridengine__relevant_complexes",
+    )
+
+    initconfig_parser.add_argument(
+        "--idle-timeout", default=300, type=int, dest="gridengine__idle_timeout"
+    )
+
+    add_parser("jobs", jobs)
+    add_parser("jobs_and_nodes", jobs_and_nodes)
+
+    add_parser("join_cluster", join_cluster).add_argument(
+        "-H", "--hostname", type=str_list, required=True
+    )
+
+    add_parser_with_columns("nodes", nodes).add_argument(
+        "--constraint-expr", "-C", default="[]"
+    )
+
+    add_parser("scheduler_nodes", scheduler_nodes)
+
+    help_msg.write("\nadvanced usage:")
+    add_parser("amend_queue_config", amend_queue_config, read_only=False)
+    add_parser("create_queues", create_queues, read_only=False)
     add_parser("shell", shell)
 
+    parser.usage = help_msg.getvalue()
     args = parser.parse_args()
     if not hasattr(args, "func"):
         parser.print_help()
@@ -778,6 +905,7 @@ def main(argv: Iterable[str] = None) -> None:
     try:
         args.func(**kwargs)
     except Exception as e:
+        logging.exception(str(e))
         print(str(e))
         import traceback
 

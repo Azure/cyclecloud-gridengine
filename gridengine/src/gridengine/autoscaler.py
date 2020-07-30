@@ -29,7 +29,9 @@ def autoscale_grid_engine(
 ) -> DemandResult:
     global _exit_code
 
+    assert not config.get("read_only", False)
     if dry_run:
+        logging.warning("Running gridengine autoscaler in dry run mode")
         # allow multiple instances
         config["lock_file"] = None
         # put in read only mode
@@ -85,21 +87,21 @@ def autoscale_grid_engine(
 
     # we also tell the driver about nodes that are unmatched. It filters them out
     # and returns a list of ones we can delete.
-    idle_timeout = int(config.get("gridengine", {}).get("idle_timeout", 300))
-    boot_timeout = int(config.get("gridengine", {}).get("boot_timeout", 3600))
+    idle_timeout = int(config.get("idle_timeout", 300))
+    boot_timeout = int(config.get("boot_timeout", 3600))
     logging.fine("Idle timeout is %s", idle_timeout)
 
-    timed_out_idle = demand_calculator.find_booting(at_least=boot_timeout)
     unmatched_for_5_mins = demand_calculator.find_unmatched_for(at_least=idle_timeout)
+    timed_out_booting = demand_calculator.find_booting(at_least=boot_timeout)
 
     timed_out_to_deleted = []
     unmatched_nodes_to_delete = []
 
-    if timed_out_idle:
+    if timed_out_booting:
         logging.info(
-            "The following nodes have timed out while booting: %s", timed_out_idle
+            "The following nodes have timed out while booting: %s", timed_out_booting
         )
-        timed_out_to_deleted = ge_driver.handle_boot_timeout(timed_out_idle) or []
+        timed_out_to_deleted = ge_driver.handle_boot_timeout(timed_out_booting) or []
 
     if unmatched_for_5_mins:
         logging.info("unmatched_for_5_mins %s", unmatched_for_5_mins)
@@ -112,7 +114,7 @@ def autoscale_grid_engine(
     if nodes_to_delete:
         try:
             logging.info(
-                "Deleting %s", nodes_to_delete, idle_timeout,
+                "Deleting %s", nodes_to_delete,
             )
             delete_result = demand_calculator.delete(nodes_to_delete)
 
@@ -124,7 +126,7 @@ def autoscale_grid_engine(
             logging.warning("Deletion failed, will retry on next iteration: %s", e)
             logging.exception(str(e))
 
-    print_demand(config, demand_result)
+    print_demand(config, demand_result, log=not dry_run)
 
     return demand_result
 
@@ -152,6 +154,9 @@ def new_demand_calculator(
 
         read_only = config.get("read_only", False)
         node_history = SQLiteNodeHistory(db_path, read_only)
+
+        node_history.create_timeout = config.get("idle_timeout", 1800)
+        node_history.last_match_timeout = config.get("boot_timeout", 300)
 
     return dcalclib.new_demand_calculator(
         config,
@@ -231,6 +236,7 @@ def print_demand(
     demand_result: DemandResult,
     output_columns: Optional[List[str]] = None,
     output_format: Optional[str] = None,
+    log: bool = False,
 ) -> None:
     # and let's use the demand printer to print the demand_result.
     if not output_columns:
@@ -249,6 +255,8 @@ def print_demand(
                 "vcpu_count",
                 "state",
                 "placement_group",
+                "create_time_remaining",
+                "idle_time_remaining",
             ],
         )
 
@@ -258,7 +266,7 @@ def print_demand(
     output_format = output_format or "table"
 
     demandprinter.print_demand(
-        output_columns, demand_result, output_format=output_format
+        output_columns, demand_result, output_format=output_format, log=log,
     )
     return demand_result
 

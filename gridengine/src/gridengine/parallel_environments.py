@@ -229,6 +229,13 @@ class GridEngineQueue:
                 hostgroup, pe_name = tok.split("=", 1)
                 hostgroups = [hostgroup]
 
+            if pe_name not in all_pes:
+                logging.warning(
+                    "Parallel environment %s was not found - %s. Skipping",
+                    pe_name,
+                    list(all_pes.keys()),
+                )
+                continue
             assert pe_name not in self.__pe_to_hostgroups
             self.__pe_to_hostgroups[pe_name] = hostgroups
             self.__parallel_environments[pe_name] = all_pes[pe_name]

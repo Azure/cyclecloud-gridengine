@@ -95,7 +95,6 @@ class GridEngineDriver:
         fqdns = check_output([QCONF_PATH, "-sel"]).decode().lower().split()
         exec_hosts = [n.split(".")[0] for n in fqdns]
 
-        queues = check_output([QCONF_PATH, "-sql"]).decode().lower().split()
         hostlists = check_output([QCONF_PATH, "-shgrpl"]).decode().lower().split()
 
         by_hostlist: Dict[str, List[str]] = {}
@@ -118,10 +117,9 @@ class GridEngineDriver:
         )
         queue_configs = partition_single(queue_configs_list, lambda q: q.qname)
 
+        hostnames_to_delete: Set[str] = set()
+
         for queue_name, nodes in by_queue.items():
-            if queue_name in queues:
-                check_call([QMOD_PATH, "-d", queue_name])
-                check_call([QMOD_PATH, "-rq", queue_name])
 
             for node in nodes:
                 if not node.hostname:
@@ -148,10 +146,16 @@ class GridEngineDriver:
                                 ]
                             )
                     if queue_name not in queue_configs:
-                        logging.error(
-                            "Queue %s does not exist? Ignoring node %s",
-                            queue_name,
-                            node,
+                        if queue_name != "unknown.q":
+                            logging.error(
+                                "Queue %s does not exist? Ignoring node %s",
+                                queue_name,
+                                node,
+                            )
+                        logging.debug(
+                            "Queue is still unknown.q for %s. This should repair itself."
+                            + " Skipping for now",
+                            node.hostname,
                         )
                         continue
 
@@ -172,18 +176,27 @@ class GridEngineDriver:
                             ]
                         )
 
-                    if hostname in admin_hosts:
-                        call([QCONF_PATH, "-dh", node.hostname])
-
-                    if hostname in submit_hosts:
-                        call([QCONF_PATH, "-ds", node.hostname])
-
-                    if hostname in exec_hosts:
-                        logging.warning("%s not in %s", hostname, exec_hosts)
-                        call([QCONF_PATH, "-de", node.hostname])
+                    hostnames_to_delete.add(hostname)
 
                 except CalledProcessError as e:
                     logging.warning(str(e))
+
+        # now that we have removed all slots entries from all queues, we can
+        # delete the hosts. If you don't do this, it will complain that the hosts
+        # are still referenced.
+        try:
+            for hostname in hostnames_to_delete:
+                if hostname in admin_hosts:
+                    call([QCONF_PATH, "-dh", node.hostname])
+
+                if hostname in submit_hosts:
+                    call([QCONF_PATH, "-ds", node.hostname])
+
+                if hostname in exec_hosts:
+                    logging.warning("%s not in %s", hostname, exec_hosts)
+                    call([QCONF_PATH, "-de", node.hostname])
+        except CalledProcessError as e:
+            logging.warning(str(e))
 
     def handle_undraining(self, matched_nodes: List[Node]) -> List[Node]:
         if self.read_only:
@@ -258,9 +271,6 @@ class GridEngineDriver:
                 if node.hostname.lower() in hostlist_for_hg:
                     continue
 
-                logging.info(
-                    "RDH hostname=%s in group=%s", node.hostname, hostlist_for_hg
-                )
                 logging.info(
                     "Adding hostname %s to hostgroup %s", node.hostname, hostgroup
                 )
@@ -377,7 +387,7 @@ class GridEngineDriver:
             logging.warning(
                 "Node %s has a hostname that can not be queried via reverse"
                 + " dns (private_ip=%s cyclecloud hostname=%s reverse dns hostname=%s)."
-                + " Often this repairs itself. Skipping",
+                + " This is common and usually repairs itself. Skipping",
                 node,
                 node.private_ip,
                 node.hostname,
@@ -530,13 +540,22 @@ def _parse_scheduler_nodes(
 
     compute_nodes: Dict[str, SchedulerNode] = {}
 
-    for qiqle in root.findall("queue_info/Queue-List"):
+    elems = list(root.findall("queue_info/Queue-List"))
+
+    def keyfunc(e: Element) -> str:
+        try:
+            name_elem = e.find("name")
+            if name_elem and name_elem.text:
+                return name_elem.text.split("@")[0]
+        except Exception:
+            pass
+        return str(e)
+
+    for qiqle in sorted(elems, key=keyfunc):
         # TODO need a better way to hide the master
         name = _getr(qiqle, "name")
 
         queue_name, fqdn = name.split("@", 1)
-        # if queue_name == "all.q":
-        #     continue
 
         ge_queue = ge_queues.get(queue_name)
         if not ge_queue:
@@ -548,10 +567,8 @@ def _parse_scheduler_nodes(
             continue
 
         if hostname in compute_nodes:
-            logging.warning(
-                "We do not support hosts that exist in more than one queue! %s",
-                hostname,
-            )
+            compute_node = compute_nodes[hostname]
+            _assign_jobs(compute_node, qiqle, running_jobs, ge_queues)
             continue
 
         slots_total = int(_getr(qiqle, "slots_total"))
@@ -592,20 +609,28 @@ def _parse_scheduler_nodes(
             + int(_getr(qiqle, "slots_resv"))
         )  # TODO resv?
 
-        # use assign_job so we just accept that this job is running on this node.
-        for jle in qiqle.findall("job_list"):
-            running_job = _parse_job(jle, ge_queues)
-            if running_job:
-                if not running_jobs.get(running_job.name):
-                    running_jobs[running_job.name] = running_job
-                running_jobs[running_job.name].executing_hostnames.append(
-                    compute_node.hostname
-                )
-            compute_node.assign(_getr(jle, "JB_job_number"))
-
+        _assign_jobs(compute_node, qiqle, running_jobs, ge_queues)
         compute_nodes[compute_node.hostname] = compute_node
 
     return list(compute_nodes.values()), list(running_jobs.values())
+
+
+def _assign_jobs(
+    compute_node: SchedulerNode,
+    e: Element,
+    running_jobs: Dict[str, Job],
+    ge_queues: Dict[str, GridEngineQueue],
+) -> None:
+    # use assign_job so we just accept that this job is running on this node.
+    for jle in e.findall("job_list"):
+        running_job = _parse_job(jle, ge_queues)
+        if running_job:
+            if not running_jobs.get(running_job.name):
+                running_jobs[running_job.name] = running_job
+            running_jobs[running_job.name].executing_hostnames.append(
+                compute_node.hostname
+            )
+        compute_node.assign(_getr(jle, "JB_job_number"))
 
 
 def _parse_jobs(root: Element, ge_queues: Dict[str, GridEngineQueue]) -> List[Job]:
