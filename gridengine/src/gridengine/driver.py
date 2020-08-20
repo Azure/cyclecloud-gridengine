@@ -89,7 +89,7 @@ class GridEngineDriver:
         fqdns = check_output([QCONF_PATH, "-sh"]).decode().lower().split()
         admin_hosts = [n.split(".")[0] for n in fqdns]
 
-        fqdns = check_output([QCONF_PATH, "-sss"]).decode().lower().split()
+        fqdns = check_output([QCONF_PATH, "-ss"]).decode().lower().split()
         submit_hosts = [n.split(".")[0] for n in fqdns]
 
         fqdns = check_output([QCONF_PATH, "-sel"]).decode().lower().split()
@@ -187,14 +187,14 @@ class GridEngineDriver:
         try:
             for hostname in hostnames_to_delete:
                 if hostname in admin_hosts:
-                    call([QCONF_PATH, "-dh", node.hostname])
+                    call([QCONF_PATH, "-dh", hostname])
 
                 if hostname in submit_hosts:
-                    call([QCONF_PATH, "-ds", node.hostname])
+                    call([QCONF_PATH, "-ds", hostname])
 
                 if hostname in exec_hosts:
                     logging.warning("%s not in %s", hostname, exec_hosts)
-                    call([QCONF_PATH, "-de", node.hostname])
+                    call([QCONF_PATH, "-de", hostname])
         except CalledProcessError as e:
             logging.warning(str(e))
 
@@ -688,7 +688,6 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
                 "Found null hard_request (%s) for job %s, skipping", req, job_id
             )
             continue
-
         resource_name = req.attrib["name"]
         complex = ge_queue.complexes.get(resource_name)
         if not complex:

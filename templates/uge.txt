@@ -6,6 +6,7 @@
 [cluster Grid Engine]
 FormLayout = selectionpanel
 Category = Schedulers
+IconUrl = http://requawestus2.blob.core.windows.net/public/Univa-128.png
 
 Autoscale = $Autoscale
 
@@ -22,8 +23,8 @@ Autoscale = $Autoscale
         gridengine.use_external_download = ${ifThenElse(BYOL, false, true)}
         gridengine.demo_base_url = ""
         gridengine.make = ge 
-        gridengine.version = 8.6.7-demo
-        gridengine.root = /sched/ge/ge-8.6.7-demo
+        gridengine.version = $GEVersion
+        gridengine.root = $GERoot
         gridengine.remote_prefix = $GERemotePrefix
 
         # For fast spin-up after Deallocate, force an immediate re-converge on boot
@@ -127,7 +128,7 @@ Autoscale = $Autoscale
         [[[configuration]]]
         gridengine.autoscale = $Autoscale
         gridengine.colocated = true
-        gridengine.pes = "mpi mpislots smpslots"
+        #gridengine.pes = "mpi mpislots smpslots"
         #gridengine.qname = hpc.q
 
         #[[[cluster-init cyclecloud/gridengine:execute]]]
@@ -164,33 +165,48 @@ Order = 1
 
     [[parameters About Univa Grid Engine]]
 
+
+        #https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Univa_logo.jpg/640px-Univa_logo.jpg
+        #https://requawestus2.blob.core.windows.net/public/Univa-128x128.png
         [[[parameter gridengine]]]
+        Order = 10
         HideLabel = true
         Config.Plugin = pico.widget.HtmlTemplateWidget
-        Config.Template := "<table> <tr><td> <a title=\"Nbendov / CC BY-SA (https://creativecommons.org/licenses/by-sa/4.0)\" href=\"https://commons.wikimedia.org/wiki/File:Univa_logo.jpg\"><img width=\"256\" alt=\"Univa logo\" src=\"https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Univa_logo.jpg/256px-Univa_logo.jpg\"> </a>  </td></tr> <tr><td><big><b>Thank you for trying Univa Grid Engine! </big> </b></td></tr> <tr><td><p>Univa Grid Engine is the leading implementation of the popular Grid Engine workload scheduling and management system used by thousands customers around the world. Univa Grid Engine helps organizations optimize throughput and performance, share resources more effectively, and improve ROI for a wide variety of applications.</p> </td></tr> <tr><td> <p>&nbsp;</p> </td></tr> <tr><td><big><b>Let’s get started  </big> </b></td></tr>   <tr><td> <p> <a href=\"http://www.univa.com/about/contact/index-ms.php\" > Contact us to get started.</a> We can discuss your applications, answer any Grid Engine questions, and explain commercial licensing options fon-premise and Azure CycleCloud resident clusters. </p></td></tr> <tr><td> <p>&nbsp;</p> </td></tr>  <tr><td><big><b>Optimized for Azure CycleCloud </big> </b></td></tr> <tr><td><p> Univa Grid Engine provides essential cloud-friendly features not found in open-source Grid Engine that help improve workload throughput and simplify management in Azure CycleCloud while providing full compatibility with existing Grid Engine integrations. </p></td></tr> <tr><td> <p>&nbsp;</p> </td></tr> <tr><td><p> <a href=\"http://www.univa.com/resources/wp-univa-grid-engine.php\"> Published benchmarks </a> demonstrate that Univa Grid Engine is on average twice as fast as open-source Grid Engine and delivers almost 10x the performance for specific workloads types and scheduling problems. </p></td></tr> <tr><td> <p>&nbsp;</p> </td></tr> <tr><td><p> With Univa Grid Engine, organizations can get work done faster, use resources more efficiently, and in some cases, reduce cloud costs by shortening the time that clusters are deployed. </p></td></tr> <tr><td><p> Unique Univa Grid Engine features include: <ul><li>Enhanced scalability throughput</li><li>Advanced container support</li><li>GPU-aware scheduling</li></ul><ul><li>Dynamic cluster re-configuration</li><li>Simplified troubleshooting</li><li>Python SDK / REST API for simplified automation </li><li>Job classes for simplified application management</li><li>Rich scheduling policies</li></ul></p>  </td></tr><tr><td> <p>&nbsp;</p> </td></tr> <tr><td> <p> <big><b>Additional Univa Grid Engine Resources: </big> </b></p></td></tr> <tr><td><ul><li><a href=\"http://www.univa.com/about/contact/index-ms.php\"> Inquire about Univa Grid Engine licensing </li><li><a href=\"http://www.unicom/products/\">Univa Grid Engine Product Page </li><li><a href=\"http://www.univa.com/resources/files/gridengine.pdf\">Univa Grid Engine Datasheet </li><li><a href=\"http://www.univa.com/resources/releases.php\">Univa Grid Engine Development and Release Activity </li></ul> </td></tr></table>"
+        Config.Template := "<table> <tr><td> <img alt=\"Univa logo\" src=\"https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Univa_logo.jpg/640px-Univa_logo.jpg\">  </td></tr> <tr><td><big><b>Thank you for trying Univa Grid Engine! </big> </b></td></tr> <tr><td><p>Univa Grid Engine is the leading implementation of the popular Grid Engine workload scheduling and management system used by thousands customers around the world. Univa Grid Engine helps organizations optimize throughput and performance, share resources more effectively, and improve ROI for a wide variety of applications.</p> </td></tr> <tr><td> <p>&nbsp;</p> </td></tr>  <tr><td><big><b>Optimized for Azure CycleCloud </big> </b></td></tr> <tr><td><p> Univa Grid Engine provides essential cloud-friendly features not found in open-source Grid Engine that help improve workload throughput and simplify management in Azure CycleCloud while providing full compatibility with existing Grid Engine integrations. </p></td></tr> <tr><td> <p>&nbsp;</p> </td></tr> <tr><td><p> <a href=\"http://www.univa.com/resources/wp-univa-grid-engine.php\"> Published benchmarks </a> demonstrate that Univa Grid Engine is on average twice as fast as open-source Grid Engine and delivers almost 10x the performance for specific workloads types and scheduling problems. </p></td></tr> <tr><td> <p>&nbsp;</p> </td></tr> <tr><td><p> With Univa Grid Engine, organizations can get work done faster, use resources more efficiently, and in some cases, reduce cloud costs by shortening the time that clusters are deployed. </p></td></tr> <tr><td><p> Unique Univa Grid Engine features include: <ul><li>Enhanced scalability throughput</li><li>Advanced container support</li><li>GPU-aware scheduling</li></ul><ul><li>Dynamic cluster re-configuration</li><li>Simplified troubleshooting</li><li>Python SDK / REST API for simplified automation </li><li>Job classes for simplified application management</li><li>Rich scheduling policies</li></ul></p>  </td></tr><tr><td> <p>&nbsp;</p> </td></tr> <tr><td> <p> <big><b>Additional Univa Grid Engine Resources: </big> </b></p></td></tr> <tr><td><ul><li><a href=\"http://www.univa.com/about/contact/index-ms.php\"> Inquire about Univa Grid Engine licensing </li><li><a href=\"https://www.univa.com/products/univa-grid-engine.php\">Univa Grid Engine Product Page </li><li><a href=\"http://www.univa.com/resources/files/gridengine.pdf\">Univa Grid Engine Datasheet </li><li><a href=\"http://www.univa.com/resources/releases.php\">Univa Grid Engine Development and Release Activity </li></ul> </td></tr></table>"
 
         [[[parameter termsnotice]]]
+        Order = 11
         HideLabel = true
         Config.Plugin = pico.widget.HtmlTemplateWidget
         Config.Template := "<table> <tr><td> By using this cluster, you are agreeing to the terms of Univa. </td></tr> <tr><td> <i> TERM SOFTWARE LICENSE AGREEMENT</i> </td></tr> <tr><td> <a href=\"https://www.univa.com/resources/files/univa_software_license_agreement.pdf\" target=\"_blank\"> Full Terms and Conditions </a></td></tr>"
+        Conditions.Hidden := BYOL is true
 
         [[[parameter HasAccepted]]]
+        Order = 13
         #HideLabel = true
         ParameterType = HtmlTemplate
         Config.Template = '''
         <span style="font-weight: 600; font-style: italic;">Please agree to the terms to continue</span>
         '''
-        Conditions.Hidden := AcceptTerms is true
-        Conditions.Value := AcceptTerms ? true : undefined
+        Conditions.Hidden := (AcceptTerms || BYOL) is true
+        Conditions.Value := (AcceptTerms || BYOL) ? true : undefined
         Required = true
         
         [[[parameter AcceptTerms]]]
+        Order = 14
         #HideLabel = true
         DefaultValue = false
         Widget.Plugin = pico.form.BooleanCheckBox
         Widget.Label = I Agree to Univa terms
         Widget.FalseValue := undefined
+        Conditions.Hidden := BYOL is true
 
+        [[[parameter contactus]]]
+        Order = 15
+        HideLabel = true
+        Config.Plugin = pico.widget.HtmlTemplateWidget
+        #Config.Template := "<table> <tr><td> <a href=\"http://www.univa.com/about/contact/index-ms.php\"><img src=\"http://requawestus2.blob.core.windows.net/public/univa_get_started_button_trans_128x23.png\" alt=\"Contact Univa\" > </td></tr>   <tr><td> <p> <a href=\"http://www.univa.com/about/contact/index-ms.php\" > Contact UNIVA to get started.</a> We can discuss your applications, answer any Grid Engine questions, and explain commercial licensing options for on-premise and Azure CycleCloud resident clusters. </p></td></tr> <tr><td> </td></tr> </table>"
+        Config.Template := "<table> <tr><td> <p> <a href=\"http://www.univa.com/about/contact/index-ms.php\" > <b> Contact UNIVA to get started</b></a>. We can discuss your applications, answer any Grid Engine questions, and explain commercial licensing options for on-premise and Azure CycleCloud resident clusters. </p></td></tr> <tr><td> </td></tr> </table>"
 
 [parameters Required Settings]
 Order = 10

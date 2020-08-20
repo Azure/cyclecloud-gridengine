@@ -102,6 +102,110 @@ UGE 8.6.1
 usage: qstat [options]
 ```
 
+## Configuring Resources
+
+### Important Files
+
+| Description  |  Location |
+|---|---|
+| Autoscale Config  | /opt/cycle/gridengine/autoscale.json  |
+| Autoscale Log  | /opt/cycle/jetpack/logs/autoscale.log  |
+| qconf trace log  | /opt/cycle/jetpack/logs/qcmd.log  |
+
+### Autoscale config
+
+This plugin will automatically scale the grid to meet the demands of the workload. 
+The _autoscale.json_ config file determines the behavior of the Grid Engine autoscaler.
+
+* Set the cyclecloud connection details
+* Set the termination timer for idle nodes
+* Multi-dimensional autoscaling is possible, set which attributes to use in the job packing e.g. slots, memory
+* Register the queues, parellel environments and hostgroups to be managed
+
+In the section `gridengine.queues` we set the heirarchy for the
+Grid Engine queues, PEs and hostgroups. These resources and their
+relationships must already exist. Here, the hostgroup `@hpc.q_mpi01` must exist and be linked in the queue conf.
+
+Create the objects:
+```bash
+qconf -Ahgrp hpc.q_mpi01  # add a hostgroup
+qconf -Ape mpi01          # add a pe
+qconf -mq hpc.q           # update the queue
+```
+
+Configure the linkage in the queue definition:
+```ini
+pe_list               NONE,[@hpc.q_mpi01=mpi01], \
+                      [@hpc.q_mpi02=mpi02]
+```
+
+Add the linkage to _autoscale.json_
+```json
+    "queues": {
+      "hpc.q": {
+        "constraints": [
+          {
+            "node.nodearray": "hpc"
+          }
+        ],
+        "hostlist": "NONE",
+        "pes": {
+          "mpi01": {
+            "hostgroups": [
+              "@hpc.q_mpi01"
+            ]
+          },
+          "mpi02": {
+            "hostgroups": [
+              "@hpc.q_mpi02"
+            ]
+          },
+```
+Cyclecloud is doing an overlay of hostgroup to nodes within a
+SinglePlacementGroup - for HPC VMs in the _hpc_ nodearray this means that they're connected to the same IB fabric. Hosts in the _@hpc.q_mpi01_ hostgroup with be accessed by the _mpi01_ parallel environment in the _hpc.q_. 
+
+There are limits to how many VMs can be added to the same IB fabric.
+So to allow for overflow, we add additional PEs and hostgroups. You can then let your jobs spill over by submitting
+with a wildcard.
+
+```bash
+qsub -q hpc.q -pe mpi\* my-script.sh
+```
+
+| Configuration | Type  | Description  |
+|---|---|---|
+| url  | String  | CC URL  |
+| username/password  | String  | CC Connection Details  |
+| cluster_name  | String  | CC Cluster Name  |
+| default_resources  | Map  | Link a node resource to a Grid Engine host resource for autoscale  |
+| gridengine.idle_timeout  | Int  | Wait time before terminating idle nodes (s)  |
+| gridengine.relevant_complexes  | List (String)  | Grid engine complexes to consider in autoscaling e.g. slots, mem_free  |
+| gridengine.queues  | Map  | Managed queue/pe/hostgroup heirarchy, See above example  |
+| gridengine.logging | File | Location of logging config file |
+
+#### Additional autoscaling resource
+
+By default, the cluster with scale based on how many slots are
+requested by the jobs. We can add another dimension to autoscaling. 
+
+Let's say we want to autoscale by the job resource request for `mem_free`.
+
+1. Add `mem_free` to the `gridengine.relevant_resources` in _autoscale.json_
+2. Link `mem_free` to the node-level memory resource in _autoscale.json_
+
+```json
+    "default_resources": [
+    {
+      "select": {},
+      "name": "slots",
+      "value": "node.vcpu_count"
+    },
+    {
+      "select": {},
+      "name": "mem_free",
+      "value": "node.memmb"
+    },
+  ],
 
 # Contributing
 
