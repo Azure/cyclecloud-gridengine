@@ -5,17 +5,17 @@ from abc import ABC, abstractmethod
 from shutil import which
 from typing import Any, Dict, List, Optional, Union
 
+from gridengine.util import check_output
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
 from hpc.autoscale.node.constraints import Constraint
 from hpc.autoscale.util import partition_single
 
-from gridengine.util import check_output
-
 QCONF_PATH = which("qconf") or ""
 
 
 _PE_CACHE: Dict[str, "ParallelEnvironment"] = {}
+_QUEUE_CACHE: List["GridEngineQueue"] = []
 _COMPLEX_CACHE: Dict[str, "Complex"] = {}
 
 
@@ -51,7 +51,35 @@ def read_parallel_environments(
     return _PE_CACHE
 
 
+def initialize(
+    autoscale_config: Dict[str, str],
+    complex_path: str,
+    pe_paths: Dict[str, str],
+    qconfigs: Dict[str, Dict[str, str]],
+) -> None:
+    global _COMPLEX_CACHE
+    _QUEUE_CACHE.clear()
+    _PE_CACHE.clear()
+
+    with open(complex_path) as fr:
+        _COMPLEX_CACHE = _parse_complexes(autoscale_config, fr.readlines())
+
+    for pe_name, pe_path in pe_paths.items():
+        with open(pe_path) as fr:
+            pe_config = _parse_ge_config(fr.readlines())
+            pe_config["pe_name"] = pe_name
+            pe = ParallelEnvironment(pe_config)
+            _PE_CACHE[pe.name] = pe
+
+    for qname, qconfig in qconfigs.items():
+        _QUEUE_CACHE.append(GridEngineQueue(qconfig, autoscale_config, []))
+
+
 def read_queue_configs(autoscale_config: Dict) -> List["GridEngineQueue"]:
+    global _QUEUE_CACHE
+    if _QUEUE_CACHE:
+        return _QUEUE_CACHE
+
     qnames = check_output([QCONF_PATH, "-sql"]).decode().split()
     ge_queues = []
     logging.debug("Found %d queues: %s", len(qnames), " ".join(qnames))
@@ -65,8 +93,8 @@ def read_queue_configs(autoscale_config: Dict) -> List["GridEngineQueue"]:
         ge_queues.append(
             GridEngineQueue(queue_config, autoscale_config, queue_constraints)
         )
-
-    return ge_queues
+    _QUEUE_CACHE = ge_queues
+    return _QUEUE_CACHE
 
 
 def set_complexes(autoscale_config: Dict, complex_lines: List[str]) -> None:
@@ -199,10 +227,11 @@ class GridEngineQueue:
         self.__pe_to_hostgroups: Dict[str, List[str]] = {}
         self.__complexes = read_complexes(autoscale_config)
         self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
+        self._pe_keys_cache: Dict[str, List[str]] = {}
         all_pes = read_parallel_environments(autoscale_config)
         self.__slots = {}
 
-        for tok in self.queue_config["slots"].split(","):
+        for tok in self.queue_config.get("slots", "").split(","):
             if "[" not in tok:
                 continue
             tok = tok.replace("[", "").replace("]", "")
@@ -239,6 +268,7 @@ class GridEngineQueue:
             assert pe_name not in self.__pe_to_hostgroups
             self.__pe_to_hostgroups[pe_name] = hostgroups
             self.__parallel_environments[pe_name] = all_pes[pe_name]
+        assert self.__parallel_environments, queue_config["pe_list"]
 
     @property
     def qname(self) -> str:
@@ -261,16 +291,34 @@ class GridEngineQueue:
         return self.__complexes
 
     def has_pe(self, pe_name: str) -> bool:
-        return pe_name in self.__parallel_environments
+        return bool(self._pe_keys(pe_name))
 
-    def get_pe(self, pe_name: str) -> "ParallelEnvironment":
+    def _pe_keys(self, pe_name: str) -> List[str]:
+        if "*" not in pe_name:
+            return [pe_name]
+
+        if pe_name not in self._pe_keys_cache:
+            pe_name_pat = pe_name.replace("*", ".*")
+            pe_name_re = re.compile(pe_name_pat)
+
+            ret = []
+
+            for key in self.__parallel_environments:
+                if pe_name_re.match(key):
+                    ret.append(key)
+
+            self._pe_keys_cache[pe_name] = ret
+
+        return self._pe_keys_cache[pe_name]
+
+    def get_pes(self, pe_name: str) -> List["ParallelEnvironment"]:
         if not self.has_pe(pe_name):
             raise RuntimeError(
                 "Queue {} does not support parallel_environment {}".format(
                     self.qname, pe_name
                 )
             )
-        return self.__parallel_environments[pe_name]
+        return [self.__parallel_environments[x] for x in self._pe_keys(pe_name)]
 
     def get_hostgroups_for_pe(self, pe_name: str) -> List[str]:
         if not self.has_pe(pe_name):
@@ -315,6 +363,14 @@ class ParallelEnvironment:
     @property
     def is_fixed(self) -> bool:
         return self.allocation_rule.is_fixed
+
+    def __repr__(self) -> str:
+        return "ParallelEnvironment(name=%s, slots=%s, alloc=%s, pg=%s)" % (
+            self.name,
+            self.slots,
+            self.allocation_rule,
+            self.requires_placement_groups,
+        )
 
 
 class AllocationRule(ABC):

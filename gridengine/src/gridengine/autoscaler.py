@@ -4,6 +4,8 @@ import sys
 from argparse import ArgumentParser
 from typing import Any, Dict, List, Optional
 
+from gridengine import parallel_environments
+from gridengine.driver import GridEngineDriver
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job import demandcalculator as dcalclib
 from hpc.autoscale.job import demandprinter
@@ -13,9 +15,6 @@ from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import SingletonLock
-
-from gridengine import parallel_environments
-from gridengine.driver import GridEngineDriver
 
 _exit_code = 0
 

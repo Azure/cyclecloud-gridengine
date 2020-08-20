@@ -2,14 +2,13 @@ import json
 import os
 from typing import Dict, List, Optional, Tuple
 
+from gridengine.driver import GridEngineDriver
+from gridengine.util import check_output
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.util import partition_single
-
-from gridengine.driver import GridEngineDriver
-from gridengine.util import check_output
 
 
 class DeferredDriver(GridEngineDriver):

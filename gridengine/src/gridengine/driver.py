@@ -7,21 +7,6 @@ from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
 
 import six
-from hpc.autoscale import hpclogging as logging
-from hpc.autoscale import hpctypes as ht
-from hpc.autoscale.job.demandcalculator import DemandCalculator
-from hpc.autoscale.job.job import Job
-from hpc.autoscale.job.nodequeue import NodeQueue
-from hpc.autoscale.job.schedulernode import SchedulerNode
-from hpc.autoscale.node.constraints import (
-    BaseNodeConstraint,
-    NodeConstraint,
-    register_parser,
-)
-from hpc.autoscale.node.node import Node
-from hpc.autoscale.node.nodemanager import NodeManager
-from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
-from hpc.autoscale.util import partition, partition_single
 
 from gridengine import parallel_environments
 from gridengine.parallel_environments import (
@@ -38,6 +23,22 @@ from gridengine.util import (
     check_call,
     check_output,
 )
+from hpc.autoscale import hpclogging as logging
+from hpc.autoscale import hpctypes as ht
+from hpc.autoscale.job.demandcalculator import DemandCalculator
+from hpc.autoscale.job.job import Job
+from hpc.autoscale.job.nodequeue import NodeQueue
+from hpc.autoscale.job.schedulernode import SchedulerNode
+from hpc.autoscale.node.constraints import (
+    BaseNodeConstraint,
+    NodeConstraint,
+    XOr,
+    register_parser,
+)
+from hpc.autoscale.node.node import Node
+from hpc.autoscale.node.nodemanager import NodeManager
+from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
+from hpc.autoscale.util import partition, partition_single
 
 
 class GridEngineDriver:
@@ -89,7 +90,7 @@ class GridEngineDriver:
         fqdns = check_output([QCONF_PATH, "-sh"]).decode().lower().split()
         admin_hosts = [n.split(".")[0] for n in fqdns]
 
-        fqdns = check_output([QCONF_PATH, "-sss"]).decode().lower().split()
+        fqdns = check_output([QCONF_PATH, "-ss"]).decode().lower().split()
         submit_hosts = [n.split(".")[0] for n in fqdns]
 
         fqdns = check_output([QCONF_PATH, "-sel"]).decode().lower().split()
@@ -573,6 +574,8 @@ def _parse_scheduler_nodes(
 
         slots_total = int(_getr(qiqle, "slots_total"))
         resources: dict = {"slots": slots_total}
+        if "slots" in ge_queue.complexes:
+            resources[ge_queue.complexes["slots"].shortcut] = slots_total
 
         for name, default_complex in ge_queue.complexes.items():
 
@@ -609,6 +612,10 @@ def _parse_scheduler_nodes(
             + int(_getr(qiqle, "slots_resv"))
         )  # TODO resv?
 
+        if "slots" in ge_queue.complexes:
+            compute_node.available[
+                ge_queue.complexes["slots"].shortcut
+            ] = compute_node.available["slots"]
         _assign_jobs(compute_node, qiqle, running_jobs, ge_queues)
         compute_nodes[compute_node.hostname] = compute_node
 
@@ -735,47 +742,54 @@ def _pe_job(
     slots: int,
     num_tasks: int,
 ) -> Optional[Job]:
-    pe_name = pe_elem.attrib["name"]
-    assert pe_name, "{} has no attribute 'name'".format(pe_elem)
+    pe_name_expr = pe_elem.attrib["name"]
+    assert pe_name_expr, "{} has no attribute 'name'".format(pe_elem)
     assert pe_elem.text, "{} has no body".format(pe_elem)
-    if not ge_queue.has_pe(pe_name):
+    if not ge_queue.has_pe(pe_name_expr):
         logging.error(
             "Queue %s does not support pe %s. Ignoring job %s",
             ge_queue.qname,
-            pe_name,
+            pe_name_expr,
             job_id,
         )
         return None
 
-    if not ge_queue.has_pe(pe_name):
+    if not ge_queue.has_pe(pe_name_expr):
         logging.error(
             "Queue %s does not support pe %s. Ignoring job %s",
             ge_queue.qname,
-            pe_name,
+            pe_name_expr,
             job_id,
         )
         return None
 
-    pe: ParallelEnvironment = ge_queue.get_pe(pe_name)
-    hostgroups = ge_queue.get_hostgroups_for_pe(pe_name)
-    pe_count = int(pe_elem.text)
+    pes: List[ParallelEnvironment] = ge_queue.get_pes(pe_name_expr)
+    queue_and_hostgroup_constraints = []
+    for pe in pes:
+        hostgroups = ge_queue.get_hostgroups_for_pe(pe.name)
+        pe_count = int(pe_elem.text)
 
-    if pe.requires_placement_groups:
-        placement_group = ht.PlacementGroup("{}_{}".format(ge_queue.qname, pe_name))
-        placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
+        if pe.requires_placement_groups:
+            placement_group = ht.PlacementGroup("{}_{}".format(ge_queue.qname, pe.name))
+            placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
+        else:
+            placement_group = None
+
+        queue_and_hostgroup_constraints.append(
+            QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, placement_group)
+        )
+
+    if len(queue_and_hostgroup_constraints) > 1:
+        constraints.append(XOr(*queue_and_hostgroup_constraints))
     else:
-        placement_group = None
-
-    constraints.append(
-        QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, placement_group)
-    )
+        constraints.append(queue_and_hostgroup_constraints[0])
 
     if pe.is_fixed:
         assert isinstance(pe.allocation_rule, FixedProcesses)
         alloc_rule: FixedProcesses = pe.allocation_rule  # type: ignore
         constraints[0]["slots"] = alloc_rule.fixed_processes
         num_tasks = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
-        return Job(job_id, constraints, iterations=num_tasks)
+        return Job(job_id, constraints, iterations=num_tasks, colocated=True)
 
     elif pe.allocation_rule.name == "$pe_slots":
         constraints[0]["slots"] = pe_count
@@ -785,12 +799,12 @@ def _pe_job(
         constraints[0]["slots"] = 1
         constraints.append({"exclusive": True})
         num_tasks = slots
-        return Job(job_id, constraints, iterations=num_tasks)
+        return Job(job_id, constraints, iterations=num_tasks, colocated=True)
 
     elif pe.allocation_rule.name == "$fill_up":
         constraints[0]["slots"] = 1
         num_tasks = pe_count * num_tasks
-        return Job(job_id, constraints, iterations=num_tasks)
+        return Job(job_id, constraints, iterations=num_tasks, colocated=True)
     else:
         # this should never happen
         logging.error(
@@ -799,6 +813,73 @@ def _pe_job(
             job_id,
         )
         return None
+
+    def preprocess_node_mgr(self, node_mgr: NodeManager) -> NodeManager:
+        """
+            # A toy example: disable all but certain regions given
+            # time of day
+            import time
+            now = time.localtime()
+            if now.tm_hour < 9:
+                limit_regions = ["westus", "westus2"]
+            else:
+                limit_regions = ["eastus"]
+
+            for bucket in node_mgr.get_buckets():
+
+                if bucket.location not in limit_regions:
+                    bucket.enabled = False
+        """
+        return node_mgr
+
+    def preprocess_demand_calculator(self, dcalc: DemandCalculator) -> DemandCalculator:
+        """
+            dcalc.allocate({})
+        """
+
+        return dcalc
+
+    def postprocess_demand_calculator(
+        self, dcalc: DemandCalculator
+    ) -> DemandCalculator:
+        """
+            # simple example to ensure there are at least 100 nodes
+            minimum = 100
+            to_allocate = minimum - len(dcalc.get_nodes())
+            if to_allocate > 0:
+                result = dcalc.allocate(
+                    {"node.nodearray": "htc", "exclusive": 1}, node_count=to_allocate
+                )
+                if not result:
+                    logging.warning("Failed to allocate minimum %s", result)
+                else:
+                    logging.info(
+                        "Allocated %d more nodes to reach minimum %d", to_allocate, minimum
+                    )
+        """
+        return dcalc
+
+    def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+            # set site specific defaults. In this example, slots are defined
+            # as the number of gigs per node.
+            from hpc.autoscale import hpctypes as ht
+
+            config["gridengine"] = ge_config = config.get("gridengine", {})
+            if not ge_config.get("default_resources"):
+                one_gig = ht.Memory.value_of("1g")
+                ge_config["default_resources"] = [
+                    {
+                        "select": {},
+                        "name": "slots",
+                        "value": lambda node: node.memory // one_gig,
+                    }
+                ]
+
+            return config
+        """
+
+        return config
 
 
 class QueueAndHostgroupConstraint(BaseNodeConstraint):
@@ -818,7 +899,8 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
     def satisfied_by_node(self, node: Node) -> SatisfiedResult:
 
         if self.placement_group:
-            if node.placement_group and node.placement_group != self.placement_group:
+            if node.placement_group != self.placement_group:
+
                 return SatisfiedResult(
                     "WrongPlacementGroup",
                     self,
@@ -893,7 +975,9 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
 
         node.available["_gridengine_hostgroups"] = sorted(list(node_hostgroups))
         assert (
-            node.placement_group is None or node.placement_group == self.placement_group
+            node.placement_group is None
+            or node.placement_group == self.placement_group,
+            "placement group %s != %s" % (node.placement_group, self.placement_group),
         )
         node.placement_group = self.placement_group
 
@@ -904,73 +988,6 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 "gridengine_hostgroups": " ".join(self.hostgroups_sorted),
             }
         return True
-
-    def preprocess_node_mgr(self, node_mgr: NodeManager) -> NodeManager:
-        """
-            # A toy example: disable all but certain regions given
-            # time of day
-            import time
-            now = time.localtime()
-            if now.tm_hour < 9:
-                limit_regions = ["westus", "westus2"]
-            else:
-                limit_regions = ["eastus"]
-
-            for bucket in node_mgr.get_buckets():
-
-                if bucket.location not in limit_regions:
-                    bucket.enabled = False
-        """
-        return node_mgr
-
-    def preprocess_demand_calculator(self, dcalc: DemandCalculator) -> DemandCalculator:
-        """
-            dcalc.allocate({})
-        """
-
-        return dcalc
-
-    def postprocess_demand_calculator(
-        self, dcalc: DemandCalculator
-    ) -> DemandCalculator:
-        """
-            # simple example to ensure there are at least 100 nodes
-            minimum = 100
-            to_allocate = minimum - len(dcalc.get_nodes())
-            if to_allocate > 0:
-                result = dcalc.allocate(
-                    {"node.nodearray": "htc", "exclusive": 1}, node_count=to_allocate
-                )
-                if not result:
-                    logging.warning("Failed to allocate minimum %s", result)
-                else:
-                    logging.info(
-                        "Allocated %d more nodes to reach minimum %d", to_allocate, minimum
-                    )
-        """
-        return dcalc
-
-    def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-            # set site specific defaults. In this example, slots are defined
-            # as the number of gigs per node.
-            from hpc.autoscale import hpctypes as ht
-
-            config["gridengine"] = ge_config = config.get("gridengine", {})
-            if not ge_config.get("default_resources"):
-                one_gig = ht.Memory.value_of("1g")
-                ge_config["default_resources"] = [
-                    {
-                        "select": {},
-                        "name": "slots",
-                        "value": lambda node: node.memory // one_gig,
-                    }
-                ]
-
-            return config
-        """
-
-        return config
 
     def __str__(self) -> str:
         return "QueueAndHostgroups(qname={}, hostgroups={}, placement_group={})".format(

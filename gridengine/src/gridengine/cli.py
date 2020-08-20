@@ -11,6 +11,9 @@ from copy import deepcopy
 from io import TextIOWrapper
 from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
 
+from gridengine import autoscaler, parallel_environments
+from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
+from gridengine.parallel_environments import ParallelEnvironment
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
@@ -20,10 +23,6 @@ from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import new_node_manager
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import partition, partition_single
-
-from gridengine import autoscaler, parallel_environments
-from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
-from gridengine.parallel_environments import ParallelEnvironment
 
 
 def error(msg: Any, *args: Any) -> None:
@@ -262,10 +261,13 @@ def create_queue(
             _create_hostgroup(master_hostname, queue_name, hostgroup)
             existing_hostgroups.append(hostgroup)
 
-    if queue_name in existing_queues:
+    exists = queue_name in existing_queues
+    if exists:
         print("Queue {} already exists".format(queue_name))
-    else:
-        _create_queue(template, master_hostname, queue_name, hostlist, hostgroup_to_pes)
+
+    _create_queue(
+        template, master_hostname, queue_name, hostlist, hostgroup_to_pes, exists
+    )
 
 
 def _create_queue(
@@ -274,6 +276,7 @@ def _create_queue(
     queue_name: str,
     hostlist: List[str],
     hostgroup_to_pes: Dict[str, List[str]],
+    exists: bool,
 ) -> None:
     fd, path = tempfile.mkstemp()
     try:
@@ -285,7 +288,7 @@ def _create_queue(
         #     os.remove(path)
         # except Exception:
         #     pass
-    check_call([QCONF_PATH, "-Aq", path])
+    check_call([QCONF_PATH, "-Mq" if exists else "-Aq", path])
 
     check_call(
         [
@@ -692,6 +695,8 @@ def shell(config: Dict) -> None:
     ge_driver = autoscaler.new_driver(config)
     demand_calc = autoscaler.new_demand_calculator(config, ge_driver, ctx)
 
+    queues = parallel_environments.read_queue_configs(config)
+
     def gehelp() -> None:
         print("config       - dict representing autoscale configuration.")
         print("dbconn       - Read-only SQLite conn to node history")
@@ -700,6 +705,7 @@ def shell(config: Dict) -> None:
         print("jobs         - List[Job] from ge_driver")
         print("node_mgr     - NodeManager")
         print("logging      - HPCLogging module")
+        print("queues      - GridEngineQueue objects")
 
     shell_locals = {
         "config": config,
@@ -710,6 +716,7 @@ def shell(config: Dict) -> None:
         "jobs": ge_driver.jobs,
         "dbconn": demand_calc.node_history.conn,
         "gehelp": gehelp,
+        "queues": partition_single(queues, lambda q: q.qname),
     }
     banner = "\nCycleCloud GE Autoscale Shell"
     interpreter = ReraiseAssertionInterpreter(locals=shell_locals)

@@ -1,12 +1,103 @@
 import logging
-from typing import Dict, List, Optional
+import sys
+from typing import Any, Dict, List, Optional
+from xml.etree import ElementTree
+from xml.etree.ElementTree import Element, TreeBuilder
 
-from gridengine.driver import GENodeQueue
+from gridengine import parallel_environments
+from gridengine.driver import GENodeQueue, _parse_jobs
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.job.nodequeue import NodeQueue
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.results import EarlyBailoutResult
+from hpc.autoscale.util import partition_single
+
+
+def _elem(parent: Element, tag: str, data: Optional[str] = None) -> Element:
+    b = TreeBuilder()
+    b.start(tag)  # types: ignore
+    if data:
+        b.data(data)
+    ret = b.end(tag)
+    parent.append(ret)
+    return ret
+
+
+class MockQsub:
+    def __init__(self) -> None:
+        self.doc = Element("gridengine")
+        self.job_info = _elem(self.doc, "job_info")
+        self.current_job_number = 1
+
+    def qsub(self, expr: str) -> None:
+        job_list = _elem(self.job_info, "job_list")
+        _elem(job_list, "JB_job_number", str(self.current_job_number))
+        self.current_job_number += 1
+
+        n = 0
+        toks = expr.split()
+        qname = None
+        pe_name = None
+        pe_size = None
+        resources = {}
+        slots = "1"
+
+        while n < len(toks):
+            c = toks[n]
+            print("parse", c)
+            if c == "-l":
+                n = n + 1
+                for stok in toks[n].split(":"):
+                    if "=" in stok:
+                        key, value = stok.split("=")
+                    else:
+                        key = stok
+                        value = "1"
+                    resources[key] = value
+            elif c == "-q":
+                n = n + 1
+                qname = toks[n]
+            elif c == "-pe":
+                pe_name = toks[n + 1]
+                pe_size = toks[n + 2]
+                slots = str(pe_size)
+                n = n + 2
+            elif c == "-t":
+                n = n + 1
+                resources["tasks"] = toks[n]
+            else:
+                print("ignore", c)
+
+            n = n + 1
+
+        _elem(job_list, "slots", slots)
+
+        for key, value in resources.items():
+            _elem(job_list, "hard_resource", value).attrib["name"] = key
+
+        if qname:
+            _elem(job_list, "hard_req_queue", qname)
+
+        if pe_name:
+            pe_elem = _elem(job_list, "requested_pe", pe_size)
+            pe_elem.attrib["name"] = pe_name
+
+    def qstat(self, writer: Any = sys.stdout) -> None:
+        from xml.dom import minidom
+
+        writer.write(ElementTree.tostring(self.doc).decode())
+        xmlstr = minidom.parseString(
+            ElementTree.tostring(self.doc).decode()
+        ).toprettyxml(indent="   ")
+        writer.write(xmlstr)
+
+    def parse_jobs(self) -> List[Job]:
+        ge_queues = partition_single(
+            parallel_environments.read_queue_configs({}), lambda g: g.qname
+        )
+        print(ge_queues)
+        return _parse_jobs(self.doc, ge_queues)
 
 
 class MockGridEngineDriver:
