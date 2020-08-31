@@ -73,7 +73,7 @@ class DeferredDriver(GridEngineDriver):
     def clean_hosts(self, invalid_nodes: Optional[List[Node]]) -> None:
         if invalid_nodes is None:
             invalid_nodes = [
-                n for n in self.scheduler_nodes if n.metadata["state"] == "au"
+                n for n in self.ge_env.nodes if n.metadata["state"] == "au"
             ]
         self.defer("clean_hosts", invalid_nodes)
 

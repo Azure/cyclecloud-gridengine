@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
+from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.bucket import NodeBucket
 from hpc.autoscale.node.constraints import NodeConstraint, get_constraints
 from hpc.autoscale.node.node import Node
@@ -23,7 +24,6 @@ from hpc.autoscale.util import partition, partition_single
 
 from gridengine import autoscaler, environment, parallel_environments
 from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
-from hpc.autoscale.job.schedulernode import SchedulerNode
 
 
 def error(msg: Any, *args: Any) -> None:
@@ -122,7 +122,7 @@ def _find_nodes(
             # it doesn't exist in CC, but we still want to delete it
             # from the cluster
             by_hostname[hostname.lower()] = SchedulerNode(hostname, {})
-            
+
         found_nodes.append(by_hostname[hostname.lower()])
 
     for node_name in node_names:

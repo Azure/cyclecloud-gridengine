@@ -518,7 +518,8 @@ class Complex:
                     else:
                         logging.warning(
                             "Could not parse '%s' for complex type %s - treating as string.",
-                            value, self.complex_type,
+                            value,
+                            self.complex_type,
                         )
                     return value
             elif self.complex_type == "DOUBLE":

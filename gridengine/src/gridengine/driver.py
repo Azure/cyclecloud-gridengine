@@ -1,6 +1,6 @@
 import math
 import socket
-from subprocess import CalledProcessError, STDOUT
+from subprocess import STDOUT, CalledProcessError
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
@@ -55,6 +55,7 @@ class GridEngineDriver:
         self.read_only = autoscale_config.get("read_only", False)
         if self.read_only is None:
             self.read_only = False
+        self._hostgroup_cache: Dict[str, List[str]] = {}
 
     def handle_draining(
         self, unmatched_nodes: List[SchedulerNode]
@@ -70,11 +71,13 @@ class GridEngineDriver:
                     check_output([QMOD_PATH, "-d", wc_queue_list_expr], stderr=STDOUT)
                     to_shutdown.append(node)
                 except CalledProcessError as e:
-                    msg = 'invalid queue'
+                    msg = "invalid queue"
 
                     if e.stdout and msg in e.stdout.decode():
                         # the node isn't even part of any queue anyways.
-                        logging.info("Ignoring failed qmod -d, as the hostname is no longer associated with a queue")
+                        logging.info(
+                            "Ignoring failed qmod -d, as the hostname is no longer associated with a queue"
+                        )
                         to_shutdown.append(node)
                     else:
                         logging.error(
@@ -155,7 +158,7 @@ class GridEngineDriver:
                                 node,
                             )
                         logging.info("Queue is unknown.q for %s.", node.hostname)
-                    else:                        
+                    else:
                         queue_config = self.ge_env.queues[queue_name]
 
                         if hostname in queue_config.slots:
@@ -216,9 +219,21 @@ class GridEngineDriver:
                     )
         return undrained
 
+    def _get_hostlist(self, hostgroup: str) -> List[str]:
+        if hostgroup not in self._hostgroup_cache:
+            fqdns = (
+                check_output([QCONF_PATH, "-shgrp_resolved", hostgroup])
+                .decode()
+                .lower()
+                .split()
+            )
+            self._hostgroup_cache[hostgroup] = [fqdn.split(".")[0] for fqdn in fqdns]
+        return self._hostgroup_cache[hostgroup]
+
     def handle_join_cluster(self, matched_nodes: List[Node]) -> List[Node]:
         """
         """
+        self._hostgroup_cache = {}
         if self.read_only:
             return []
 
@@ -227,82 +242,7 @@ class GridEngineDriver:
         # TODO rethink this RDH
         # self.handle_undraining(matched_nodes)
 
-        _hostgroup_cache: Dict[str, List[str]] = {}
-
-        def _get_hostlist(hostgroup: str) -> List[str]:
-            if hostgroup not in _hostgroup_cache:
-                fqdns = (
-                    check_output([QCONF_PATH, "-shgrp_resolved", hostgroup])
-                    .decode()
-                    .lower()
-                    .split()
-                )
-                _hostgroup_cache[hostgroup] = [fqdn.split(".")[0] for fqdn in fqdns]
-            return _hostgroup_cache[hostgroup]
-
-        joined_nodes = self.add_nodes_to_cluster(matched_nodes)
-
-        completed_nodes = []
-
-        for node in joined_nodes:
-            hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
-            if not hostgroups_expr:
-                logging.warning(
-                    "No hostgroups found for node %s - %s",
-                    node,
-                    node.software_configuration,
-                )
-                continue
-
-            # TODO assert these are @hostgroups
-            hostgroups = hostgroups_expr.split(" ")
-
-            for hostgroup in hostgroups:
-                if not node.hostname:
-                    continue
-
-                if not hostgroup.startswith("@"):
-                    # hostgroups have to start with @
-                    continue
-
-                hostlist_for_hg = _get_hostlist(hostgroup)
-                if node.hostname.lower() in hostlist_for_hg:
-                    continue
-
-                logging.info(
-                    "Adding hostname %s to hostgroup %s", node.hostname, hostgroup
-                )
-
-                check_call(
-                    [
-                        QCONF_PATH,
-                        "-aattr",
-                        "hostgroup",
-                        "hostlist",
-                        node.hostname,
-                        hostgroup,
-                    ]
-                )
-
-                for res_name, res_value in node.resources.items():
-                    if res_name not in self.ge_env.complexes:
-                        logging.fine("Ignoring unknown complex %s", res_name)
-                        continue
-
-                    check_call(
-                        [
-                            QCONF_PATH,
-                            "-mattr",
-                            "exechost",
-                            "complex_values",
-                            "{}={}".format(res_name, res_value),
-                            node.hostname
-                        ]
-                    )
-
-            completed_nodes.append(node)
-
-        return completed_nodes
+        return self.add_nodes_to_cluster(matched_nodes)
 
     def handle_post_join_cluster(self, nodes: List[Node]) -> List[Node]:
         """
@@ -355,6 +295,11 @@ class GridEngineDriver:
     def _add_node_to_cluster(
         self, node: Node, admin_hostnames: List[str], submit_hostnames: List[str]
     ) -> bool:
+        # this is the very last thing we do, so this is basically 'committing'
+        # the node.
+        if node.hostname in submit_hostnames:
+            return False
+
         if node.state == "Failed":
             logging.warning("Ignoring failed node %s", node)
             return False
@@ -436,6 +381,77 @@ class GridEngineDriver:
                         ]
                     )
 
+                for res_name, res_value in node.resources.items():
+                    if res_name not in self.ge_env.complexes:
+                        logging.fine("Ignoring unknown complex %s", res_name)
+                        continue
+
+                    if not res_value:
+                        logging.warning("Ignoring blank complex %s for %s", res_name, node)
+                    complex = self.ge_env.complexes[res_name]
+                    if (
+                        complex.name != complex.shortcut
+                        and res_name == complex.shortcut
+                    ):
+                        # this is just a duplicate of the long form
+                        continue
+
+                    if complex.name == "slots":
+                        # this is handled by ge in a special way
+                        continue
+
+                    check_call(
+                        [
+                            QCONF_PATH,
+                            "-mattr",
+                            "exechost",
+                            "complex_values",
+                            "{}={}".format(res_name, res_value),
+                            node.hostname,
+                        ]
+                    )
+
+                hostgroups_expr = node.software_configuration.get(
+                    "gridengine_hostgroups"
+                )
+            if not hostgroups_expr:
+                logging.warning(
+                    "No hostgroups found for node %s - %s",
+                    node,
+                    node.software_configuration,
+                )
+                return False
+
+            # TODO assert these are @hostgroups
+            hostgroups = hostgroups_expr.split(" ")
+
+            for hostgroup in hostgroups:
+                if not node.hostname:
+                    continue
+
+                if not hostgroup.startswith("@"):
+                    # hostgroups have to start with @
+                    continue
+
+                hostlist_for_hg = self._get_hostlist(hostgroup)
+                if node.hostname.lower() in hostlist_for_hg:
+                    continue
+
+                logging.info(
+                    "Adding hostname %s to hostgroup %s", node.hostname, hostgroup
+                )
+
+                check_call(
+                    [
+                        QCONF_PATH,
+                        "-aattr",
+                        "hostgroup",
+                        "hostlist",
+                        node.hostname,
+                        hostgroup,
+                    ]
+                )
+
                 check_call([QCONF_PATH, "-as", node.hostname])
 
         except CalledProcessError as e:
@@ -454,7 +470,7 @@ class GridEngineDriver:
             "Cleaning out the following hosts in state=au: %s", invalid_nodes
         )
         self.handle_post_delete(invalid_nodes)
-        
+
         to_clean = list([n for n in self.ge_env.nodes if n not in invalid_nodes])
 
         for node in to_clean:
@@ -621,7 +637,10 @@ def _get_jobs_and_nodes(
 
     nodes, running_jobs = _parse_scheduler_nodes(root, ge_queues)
     pending_jobs = _parse_jobs(root, ge_queues)
-    return running_jobs + pending_jobs, nodes
+    by_job_id = partition(pending_jobs, lambda j: j.name)
+    for rjob in running_jobs:
+        by_job_id.pop(rjob.name, {})
+    return pending_jobs, nodes
 
 
 def _parse_scheduler_nodes(
@@ -917,26 +936,28 @@ def _pe_job(
         num_nodes = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
 
         def job_constructor(job_id: str) -> Job:
-            return Job(job_id, constraints, node_count=num_nodes, colocated=True)
+            return Job(
+                job_id, constraints, iterations=1, node_count=num_nodes, colocated=True
+            )
 
     elif pe.allocation_rule.name == "$pe_slots":
         constraints[0]["slots"] = pe_count
         # this is not colocated, so we can skip the redirection
         return [Job(job_id, constraints, iterations=num_tasks)]
 
-    elif pe.allocation_rule.name == "$round_robin":
-        constraints[0]["slots"] = 1
+    # elif pe.allocation_rule.name == "$round_robin":
+    #     constraints[0]["slots"] = 1
 
-        def job_constructor(job_id: str) -> Job:
-            return Job(
-                job_id,
-                constraints,
-                node_count=slots,
-                colocated=True,
-                packing_strategy="scatter",
-            )
+    #     def job_constructor(job_id: str) -> Job:
+    #         return Job(
+    #             job_id,
+    #             constraints,
+    #             node_count=slots,
+    #             colocated=True,
+    #             packing_strategy="scatter",
+    #         )
 
-    elif pe.allocation_rule.name == "$fill_up":
+    elif pe.allocation_rule.name in ["$round_robin", "$fill_up"]:
         constraints[0]["slots"] = 1
 
         def job_constructor(job_id: str) -> Job:
