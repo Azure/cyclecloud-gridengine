@@ -284,6 +284,22 @@ class GridEngineDriver:
                     ]
                 )
 
+                for res_name, res_value in node.resources.items():
+                    if res_name not in self.ge_env.complexes:
+                        logging.fine("Ignoring unknown complex %s", res_name)
+                        continue
+
+                    check_call(
+                        [
+                            QCONF_PATH,
+                            "-mattr",
+                            "exechost",
+                            "complex_values",
+                            "{}={}".format(res_name, res_value),
+                            node.hostname
+                        ]
+                    )
+
             completed_nodes.append(node)
 
         return completed_nodes
@@ -408,9 +424,7 @@ class GridEngineDriver:
                     )
                     return False
 
-                for qname in [
-                    "all.q",
-                ]:
+                for qname in ["all.q", ge_qname]:
                     check_call(
                         [
                             QCONF_PATH,
@@ -440,7 +454,11 @@ class GridEngineDriver:
             "Cleaning out the following hosts in state=au: %s", invalid_nodes
         )
         self.handle_post_delete(invalid_nodes)
-        self.scheduler_nodes = [n for n in self.ge_env.nodes if n not in invalid_nodes]
+        
+        to_clean = list([n for n in self.ge_env.nodes if n not in invalid_nodes])
+
+        for node in to_clean:
+            self.ge_env.nodes.remove(node)
 
     def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -698,6 +716,7 @@ def _parse_scheduler_nodes(
                 ge_queue.complexes["slots"].shortcut
             ] = compute_node.available["slots"]
         _assign_jobs(compute_node, qiqle, running_jobs, ge_queues)
+
         compute_nodes[compute_node.hostname] = compute_node
 
     return list(compute_nodes.values()), list(running_jobs.values())
@@ -711,8 +730,8 @@ def _assign_jobs(
 ) -> None:
     # use assign_job so we just accept that this job is running on this node.
     for jle in e.findall("job_list"):
-        running_job = _parse_job(jle, ge_queues)
-        if running_job:
+        parsed_running_jobs = _parse_job(jle, ge_queues) or []
+        for running_job in parsed_running_jobs:
             if not running_jobs.get(running_job.name):
                 running_jobs[running_job.name] = running_job
             running_jobs[running_job.name].executing_hostnames.append(

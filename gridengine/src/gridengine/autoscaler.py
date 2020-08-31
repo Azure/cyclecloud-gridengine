@@ -144,9 +144,6 @@ def new_demand_calculator(
     node_history: Optional[NodeHistory] = None,
     singleton_lock: Optional[SingletonLock] = None,
 ) -> DemandCalculator:
-    # it has two member variables - jobs
-    # ge_driver.jobs - autoscale Jobs
-    # ge_driver.scheduler_nodes - autoscale SchedulerNodes
     if ge_env is None:
         ge_env = envlib.from_qconf(config)
 

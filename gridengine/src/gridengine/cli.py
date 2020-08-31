@@ -104,6 +104,7 @@ def _find_nodes(
     node_names = node_names or []
     ge_env = environment.from_qconf(config)
     ge_driver = autoscaler.new_driver(config, ge_env)
+
     demand_calc = autoscaler.calculate_demand(config, ge_env, ge_driver)
     demand_result = demand_calc.finish()
     by_hostname = partition_single(
@@ -456,10 +457,12 @@ def demand(
     output_format: Optional[str] = None,
 ) -> None:
     """Runs autoscale in dry run mode to see the demand for new nodes"""
+    ctx = DefaultContextHandler("[demand-cli]")
+    register_result_handler(ctx)
     ge_env = environment.from_qconf(config)
     ge_driver = autoscaler.new_driver(config, ge_env)
     config = ge_driver.preprocess_config(config)
-    demand_calc = autoscaler.calculate_demand(config, ge_env, ge_driver)
+    demand_calc = autoscaler.calculate_demand(config, ge_env, ge_driver, ctx)
     demand_result = demand_calc.finish()
 
     autoscaler.print_demand(config, demand_result, output_columns, output_format)
@@ -475,7 +478,6 @@ def nodes(
     ge_env = environment.from_qconf(config)
     ge_driver = autoscaler.new_driver(config, ge_env)
     dcalc = autoscaler.new_demand_calculator(config, ge_env, ge_driver)
-    # node_mgr = new_node_manager(config, existing_nodes=ge_driver.scheduler_nodes)
     filtered = _query_with_constraints(
         config, constraint_expr, dcalc.node_mgr.get_nodes()
     )
@@ -722,7 +724,7 @@ def shell(config: Dict) -> None:
         "jobs": ge_env.jobs,
         "dbconn": demand_calc.node_history.conn,
         "gehelp": gehelp,
-        "queues": partition_single(queues, lambda q: q.qname),
+        "queues": queues,
         "ge_env": ge_env,
     }
     banner = "\nCycleCloud GE Autoscale Shell"

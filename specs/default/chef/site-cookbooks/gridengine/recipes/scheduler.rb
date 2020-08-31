@@ -397,35 +397,3 @@ cookbook_file "/opt/cycle/gridengine/logging.conf" do
   action :create
   not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf")}
 end
-
-bash 'setup virtualenv' do
-  code <<-EOH
-  set -e
-  source /etc/profile.d/sgesettings.sh
-  jetpack download cyclecloud-gridengine-pkg-2.0.0.tar.gz --project gridengine #{node[:cyclecloud][:bootstrap]}/
-
-  cd #{node[:cyclecloud][:bootstrap]}/
-  tar xzf cyclecloud-gridengine-pkg-2.0.0.tar.gz
-  cd cyclecloud-gridengine/
-  INSTALLDIR=/opt/cycle/gridengine
-  mkdir -p $INSTALLDIR/venv
-  ./install.sh --install-python3 --venv $INSTALLDIR/venv
-  azge initconfig --cluster-name #{node[:cyclecloud][:cluster][:name]} \
-                  --username     #{node[:cyclecloud][:config][:username]} \
-                  --password     #{node[:cyclecloud][:config][:password]} \
-                  --url          #{node[:cyclecloud][:config][:web_server]} \
-                  --lock-file    $INSTALLDIR/scalelib.lock \
-                  --log-config   $INSTALLDIR/logging.conf \
-                  --default-resource '{"select": {}, "name": "slots", "value": "node.vcpu_count"}' \
-                  --idle-timeout #{node[:gridengine][:idle_timeout]} \
-                  --relevant-complexes #{relevant_complexes_str} > $INSTALLDIR/autoscale.json
-
-  # properly create our queues.
-  azge create_queues -c $INSTALLDIR/autoscale.json
-  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
-  EOH
-  action :run
-  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
-end
-
-include_recipe "gridengine::autostart"
