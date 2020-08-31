@@ -1,6 +1,6 @@
 import math
 import socket
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, STDOUT
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
@@ -67,18 +67,20 @@ class GridEngineDriver:
             if node.hostname:
                 wc_queue_list_expr = "*@{}".format(node.hostname)
                 try:
-                    check_call([QMOD_PATH, "-d", wc_queue_list_expr])
+                    check_output([QMOD_PATH, "-d", wc_queue_list_expr], stderr=STDOUT)
                     to_shutdown.append(node)
                 except CalledProcessError as e:
-                    msg = 'invalid queue "{}"'.format(wc_queue_list_expr)
-                    if msg in str(e):
+                    msg = 'invalid queue'
+
+                    if e.stdout and msg in e.stdout.decode():
                         # the node isn't even part of any queue anyways.
+                        logging.info("Ignoring failed qmod -d, as the hostname is no longer associated with a queue")
                         to_shutdown.append(node)
                     else:
                         logging.error(
-                            "Could not drain %s: %s. Will not shutdown node.",
+                            "Could not drain %s: %s. Will not shutdown node. ",
                             node,
-                            str(e),
+                            e.stdout.decode() if e.stdout else str(e),
                         )
         return to_shutdown
 
@@ -152,29 +154,24 @@ class GridEngineDriver:
                                 queue_name,
                                 node,
                             )
-                        logging.debug(
-                            "Queue is still unknown.q for %s. This should repair itself."
-                            + " Skipping for now",
-                            node.hostname,
-                        )
-                        continue
+                        logging.info("Queue is unknown.q for %s.", node.hostname)
+                    else:                        
+                        queue_config = self.ge_env.queues[queue_name]
 
-                    queue_config = self.ge_env.queues[queue_name]
+                        if hostname in queue_config.slots:
+                            queue_host = "{}@{}".format(queue_name, hostname)
+                            slots = queue_config.slots[hostname]
 
-                    if hostname in queue_config.slots:
-                        queue_host = "{}@{}".format(queue_name, hostname)
-                        slots = queue_config.slots[hostname]
-
-                        call(
-                            [
-                                QCONF_PATH,
-                                "-dattr",
-                                "queue",
-                                "slots",
-                                str(slots),
-                                queue_host,
-                            ]
-                        )
+                            call(
+                                [
+                                    QCONF_PATH,
+                                    "-dattr",
+                                    "queue",
+                                    "slots",
+                                    str(slots),
+                                    queue_host,
+                                ]
+                            )
 
                     hostnames_to_delete.add(hostname)
 
@@ -193,8 +190,9 @@ class GridEngineDriver:
                     call([QCONF_PATH, "-ds", node.hostname])
 
                 if hostname in exec_hosts:
-                    logging.warning("%s not in %s", hostname, exec_hosts)
                     call([QCONF_PATH, "-de", node.hostname])
+                else:
+                    logging.warning("%s not in %s", hostname, exec_hosts)
         except CalledProcessError as e:
             logging.warning(str(e))
 
