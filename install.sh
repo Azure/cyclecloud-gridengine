@@ -77,3 +77,15 @@ azge -h 2>&1 > /dev/null || exit 1
 ln -sf $VENV/bin/azge /usr/local/bin/
 
 echo 'azge' installed. A symbolic link was made to /usr/local/bin/azge
+crontab -l > /tmp/current_crontab
+grep -q 'Created by cyclecloud-gridengine install.sh' /tmp/current_crontab
+if [ $? != 0 ]; then
+    echo \# Created by cyclecloud-gridengine install.sh >> /tmp/current_crontab
+    echo '* * * * * /usr/local/bin/azge autoscale -c /opt/cycle/gridengine/autoscale.json' >> /tmp/current_crontab
+    crontab /tmp/current_crontab
+fi
+rm -f /tmp/current_crontab
+
+crontab -l | grep -q 'Created by cyclecloud-gridengine install.sh' && exit 0
+echo "Could not install cron job for autoscale!" >&2
+exit 1
