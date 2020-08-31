@@ -127,7 +127,6 @@ setup(
             "../notices",
         ]
     },
-    scripts=["bin/azge"],
     install_requires=["typing_extensions"],
     tests_require=["pytest==3.2.3"],
     cmdclass={"test": PyTest, "format": Formatter, "types": TypeChecking},
