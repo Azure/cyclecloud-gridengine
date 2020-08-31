@@ -1,8 +1,15 @@
 from typing import Any, Dict, Optional
 
-from gridengine import driver
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node import constraints
+
+from gridengine import driver
+from gridengine.parallel_environments import (
+    AllocationRule,
+    Complex,
+    new_gridenging_queue,
+    new_parallel_environment,
+)
 
 
 def test_custom_parser() -> None:
@@ -64,3 +71,41 @@ def test_custom_parser() -> None:
     assert node.software_configuration["gridengine_hostgroups"] == " ".join(
         q.hostgroups_sorted
     )
+
+
+def test_preprocess_configs() -> None:
+    pes = {
+        "mpi": new_parallel_environment(
+            "mpi", 999, AllocationRule.value_of("$round_robin")
+        ),
+        "mpislots": new_parallel_environment(
+            "mpislots", 999, AllocationRule.value_of("$fill_up")
+        ),
+        "smp": new_parallel_environment(
+            "smp", 999, AllocationRule.value_of("$pe_slots")
+        ),
+        "single": new_parallel_environment("single", 999, AllocationRule.value_of("1")),
+    }
+    complexes = {"slots": Complex("slots", "s", "int", "<=", True, True, "", 0)}
+    gequeues = {
+        "hpc.q": new_gridenging_queue(
+            "hpc.q",
+            "@hpc",
+            ["mpi", "smp", "single"],
+            [],
+            complexes=complexes,
+            parallel_envs=pes,
+        )
+    }
+    d = driver.new_driver({}, [], [], pes, gequeues)
+
+    # If the user did not define any placement groups, define the defaults.
+    assert {
+        "nodearrays": {"default": {"placement_groups": ["hpc_q_mpi", "hpc_q_single"]}}
+    } == d.preprocess_config({})
+
+    # if they did define defaults, make no changes
+    custom_config = {
+        "nodearrays": {"default": {"placement_groups": ["hpc_q_mpi_CUSTOM"]}}
+    }
+    assert custom_config == d.preprocess_config(custom_config)

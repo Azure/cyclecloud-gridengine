@@ -4,19 +4,19 @@ from typing import Any, Dict, List, Optional
 from xml.etree import ElementTree
 from xml.etree.ElementTree import Element, TreeBuilder
 
-from gridengine import parallel_environments
-from gridengine.driver import GENodeQueue, _parse_jobs
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.job.nodequeue import NodeQueue
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.results import EarlyBailoutResult
-from hpc.autoscale.util import partition_single
+
+from gridengine.driver import GENodeQueue, _parse_jobs
+from gridengine.environment import GridEngineEnvironment
 
 
 def _elem(parent: Element, tag: str, data: Optional[str] = None) -> Element:
     b = TreeBuilder()
-    b.start(tag)  # types: ignore
+    b.start(tag, {})  # types: ignore
     if data:
         b.data(data)
     ret = b.end(tag)
@@ -25,10 +25,11 @@ def _elem(parent: Element, tag: str, data: Optional[str] = None) -> Element:
 
 
 class MockQsub:
-    def __init__(self) -> None:
+    def __init__(self, ge_env: GridEngineEnvironment) -> None:
         self.doc = Element("gridengine")
         self.job_info = _elem(self.doc, "job_info")
         self.current_job_number = 1
+        self.ge_env = ge_env
 
     def qsub(self, expr: str) -> None:
         job_list = _elem(self.job_info, "job_list")
@@ -42,12 +43,15 @@ class MockQsub:
         pe_size = None
         resources = {}
         slots = "1"
+        # optional - only used for array jobs, i.e. qsub -t 100
+        tasks = None
 
         while n < len(toks):
             c = toks[n]
-            print("parse", c)
+
             if c == "-l":
                 n = n + 1
+
                 for stok in toks[n].split(":"):
                     if "=" in stok:
                         key, value = stok.split("=")
@@ -65,19 +69,22 @@ class MockQsub:
                 n = n + 2
             elif c == "-t":
                 n = n + 1
-                resources["tasks"] = toks[n]
-            else:
-                print("ignore", c)
+                tasks = toks[n]
+                if "-" in tasks and ":" not in tasks:
+                    tasks = "{}:1".format(tasks)
 
             n = n + 1
 
         _elem(job_list, "slots", slots)
 
         for key, value in resources.items():
-            _elem(job_list, "hard_resource", value).attrib["name"] = key
+            _elem(job_list, "hard_request", value).attrib["name"] = key
 
         if qname:
             _elem(job_list, "hard_req_queue", qname)
+
+        if tasks:
+            _elem(job_list, "tasks", tasks)
 
         if pe_name:
             pe_elem = _elem(job_list, "requested_pe", pe_size)
@@ -93,17 +100,12 @@ class MockQsub:
         writer.write(xmlstr)
 
     def parse_jobs(self) -> List[Job]:
-        ge_queues = partition_single(
-            parallel_environments.read_queue_configs({}), lambda g: g.qname
-        )
-        print(ge_queues)
-        return _parse_jobs(self.doc, ge_queues)
+        return _parse_jobs(self.doc, self.ge_env.queues)
 
 
 class MockGridEngineDriver:
-    def __init__(self, scheduler_nodes: List[SchedulerNode], jobs: List[Job]):
-        self.scheduler_nodes = scheduler_nodes
-        self.jobs = jobs
+    def __init__(self, ge_env: GridEngineEnvironment) -> None:
+        self.ge_env = ge_env
         self.drained: Dict[str, Node] = {}
 
     def node_prioritizer(self, node: Node) -> int:
@@ -111,10 +113,6 @@ class MockGridEngineDriver:
 
     def early_bailout(self, node: Node) -> EarlyBailoutResult:
         return EarlyBailoutResult("success")
-
-    @property
-    def current_hostnames(self) -> List[str]:
-        return [n.hostname for n in self.scheduler_nodes]
 
     def preprocess_config(self, config: Dict) -> Dict:
         return config
@@ -128,7 +126,7 @@ class MockGridEngineDriver:
     def handle_draining(self, unmatched_nodes: List[Node]) -> None:
         for node in unmatched_nodes:
             if node.hostname not in self.drained:
-                if node.hostname in self.current_hostnames:
+                if node.hostname in self.ge_env.current_hostnames:
                     self.drained[node.hostname] = node
             else:
                 assert self.drained[node.hostname] == node
@@ -136,10 +134,8 @@ class MockGridEngineDriver:
     def handle_join_cluster(self, matched_nodes: List[Node]) -> List[Node]:
         ret = []
         for node in matched_nodes:
-            if node.hostname and node.hostname not in self.current_hostnames:
-                self.scheduler_nodes.append(
-                    SchedulerNode(node.hostname, node.resources)
-                )
+            if node.hostname and node.hostname not in self.ge_env.current_hostnames:
+                self.ge_env.add_node(SchedulerNode(node.hostname, node.resources))
                 ret.append(node)
         return ret
 
@@ -149,10 +145,7 @@ class MockGridEngineDriver:
             return
 
         for node in nodes_to_delete:
-            if node.hostname in self.current_hostnames:
-                self.scheduler_nodes = [
-                    t for t in self.scheduler_nodes if t.hostname != node.hostname
-                ]
+            self.ge_env.delete_node(node)
 
     def handle_undraining(self, matched_nodes: List[Node]) -> None:
         for node in matched_nodes:

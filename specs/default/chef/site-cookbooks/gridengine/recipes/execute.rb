@@ -119,7 +119,8 @@ end
 
 execute "configure_slot_attributes" do
   set_slot_type = lambda { "qconf -mattr exechost complex_values slot_type=#{slot_type} $(hostname)" }
-  
+  set_node_exclusivity = lambda { "qconf -mattr exechost complex_values exclusive=1 $(hostname)" }
+    
   set_slot_count = lambda { "true" }  # No-Op
   if node[:gridengine][:slots]
     set_slot_count = lambda { "qconf -mattr queue slots #{node[:gridengine][:slots]} all.q@$(hostname) && " }
@@ -128,12 +129,10 @@ execute "configure_slot_attributes" do
   is_node_grouped = node[:cyclecloud][:node]["placement_group_id"].nil?
   # Note: hostname changes during converge, which is why we want to run these commands lazily.
   
-  set_node_exclusivity = lambda { "true" }
   set_placement_group = lambda { "true" }
 
   if is_node_grouped
     # grouped/mpi jobs are exclusive
-    set_node_exclusivity = lambda { "qconf -mattr exechost complex_values exclusive=1 $(hostname)" }
     set_placement_group = lambda { "qconf -mattr exechost complex_values placement_group=#{placement_group} $(hostname)" }
   end
 

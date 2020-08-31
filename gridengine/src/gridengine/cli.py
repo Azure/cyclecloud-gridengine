@@ -11,9 +11,6 @@ from copy import deepcopy
 from io import TextIOWrapper
 from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
 
-from gridengine import autoscaler, parallel_environments
-from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
-from gridengine.parallel_environments import ParallelEnvironment
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
@@ -23,6 +20,10 @@ from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import new_node_manager
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import partition, partition_single
+
+from gridengine import autoscaler, environment, parallel_environments
+from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
+from hpc.autoscale.job.schedulernode import SchedulerNode
 
 
 def error(msg: Any, *args: Any) -> None:
@@ -101,9 +102,9 @@ def _find_nodes(
 ) -> Tuple[GridEngineDriver, DemandCalculator, List[Node]]:
     hostnames = hostnames or []
     node_names = node_names or []
-
-    ge_driver = autoscaler.new_driver(config)
-    demand_calc = autoscaler.calculate_demand(config, ge_driver)
+    ge_env = environment.from_qconf(config)
+    ge_driver = autoscaler.new_driver(config, ge_env)
+    demand_calc = autoscaler.calculate_demand(config, ge_env, ge_driver)
     demand_result = demand_calc.finish()
     by_hostname = partition_single(
         demand_result.compute_nodes, lambda n: n.hostname_or_uuid.lower()
@@ -117,11 +118,10 @@ def _find_nodes(
             error("Please specify a hostname")
 
         if hostname.lower() not in by_hostname:
-            error(
-                "Could not find a CycleCloud node that has hostname %s."
-                + " Run 'nodes' to see available nodes.",
-                hostname,
-            )
+            # it doesn't exist in CC, but we still want to delete it
+            # from the cluster
+            by_hostname[hostname.lower()] = SchedulerNode(hostname, {})
+            
         found_nodes.append(by_hostname[hostname.lower()])
 
     for node_name in node_names:
@@ -407,9 +407,7 @@ def amend_queue_config(config: Dict, writer: TextIO = sys.stdout) -> None:
     ), "Invalid config. gridengine.queues must be a dictionary."
 
     by_nodearray = partition(node_mgr.get_buckets(), lambda b: b.nodearray)
-    system_pes: Dict[
-        str, ParallelEnvironment
-    ] = parallel_environments.read_parallel_environments(config)
+    ge_env = environment.from_qconf(new_config)
 
     for nodearray, buckets in by_nodearray.items():
         bucket = buckets[0]
@@ -417,7 +415,7 @@ def amend_queue_config(config: Dict, writer: TextIO = sys.stdout) -> None:
         qname = nodearray_ge_config.get("qname", "{}.q".format(nodearray))
         queues[qname] = queue = queues.get(nodearray, {})
         colocated = str(nodearray_ge_config.get("colocated", False)).lower() == "true"
-        pes = nodearray_ge_config.get("pes", " ".join(system_pes.keys())).split()
+        pes = nodearray_ge_config.get("pes", " ".join(ge_env.pes.keys())).split()
         queue["constraints"] = [{"node.nodearray": nodearray}]
         if colocated:
             queue["hostlist"] = "NONE"
@@ -425,10 +423,10 @@ def amend_queue_config(config: Dict, writer: TextIO = sys.stdout) -> None:
             queue["hostlist"] = "@{}".format(qname)
 
         for pe_name in pes:
-            if pe_name not in system_pes:
+            if pe_name not in ge_env.pes:
                 raise RuntimeError(
                     "Unknown parallel_environment {}: Expected one of {}".format(
-                        pe_name, " ".join(system_pes.keys())
+                        pe_name, " ".join(ge_env.pes.keys())
                     )
                 )
 
@@ -441,7 +439,7 @@ def amend_queue_config(config: Dict, writer: TextIO = sys.stdout) -> None:
                 queue["pes"][pe_name]["hostgroups"].append(None)
                 continue
 
-            pe = system_pes[pe_name]
+            pe = ge_env.pes[pe_name]
             if pe.requires_placement_groups:
                 queue["pes"][pe_name]["hostgroups"].append(
                     "@{}_{}".format(qname, pe_name)
@@ -458,8 +456,10 @@ def demand(
     output_format: Optional[str] = None,
 ) -> None:
     """Runs autoscale in dry run mode to see the demand for new nodes"""
-    ge_driver = autoscaler.new_driver(config)
-    demand_calc = autoscaler.calculate_demand(config, ge_driver)
+    ge_env = environment.from_qconf(config)
+    ge_driver = autoscaler.new_driver(config, ge_env)
+    config = ge_driver.preprocess_config(config)
+    demand_calc = autoscaler.calculate_demand(config, ge_env, ge_driver)
     demand_result = demand_calc.finish()
 
     autoscaler.print_demand(config, demand_result, output_columns, output_format)
@@ -472,8 +472,9 @@ def nodes(
     output_format: Optional[str] = None,
 ) -> None:
     """Query nodes"""
-    ge_driver = autoscaler.new_driver(config)
-    dcalc = autoscaler.new_demand_calculator(config, ge_driver)
+    ge_env = environment.from_qconf(config)
+    ge_driver = autoscaler.new_driver(config, ge_env)
+    dcalc = autoscaler.new_demand_calculator(config, ge_env, ge_driver)
     # node_mgr = new_node_manager(config, existing_nodes=ge_driver.scheduler_nodes)
     filtered = _query_with_constraints(
         config, constraint_expr, dcalc.node_mgr.get_nodes()
@@ -485,22 +486,20 @@ def nodes(
 
 def jobs(config: Dict) -> None:
     """Writes out Job objects as json"""
-    ge_driver = autoscaler.new_driver(config)
-    json.dump(ge_driver.jobs, sys.stdout, indent=2, default=lambda x: x.to_dict())
+    ge_env = environment.from_qconf(config)
+    json.dump(ge_env.jobs, sys.stdout, indent=2, default=lambda x: x.to_dict())
 
 
 def scheduler_nodes(config: Dict) -> None:
     """Writes out SchedulerNode objects as json"""
-    ge_driver = autoscaler.new_driver(config)
-    json.dump(
-        ge_driver.scheduler_nodes, sys.stdout, indent=2, default=lambda x: x.to_dict()
-    )
+    ge_env = environment.from_qconf(config)
+    json.dump(ge_env.nodes, sys.stdout, indent=2, default=lambda x: x.to_dict())
 
 
 def jobs_and_nodes(config: Dict) -> None:
     """Writes out SchedulerNode and Job objects as json - simultaneously to avoid race"""
-    ge_driver = autoscaler.new_driver(config)
-    to_dump = {"jobs": ge_driver.jobs, "nodes": ge_driver.scheduler_nodes}
+    ge_env = environment.from_qconf(config)
+    to_dump = {"jobs": ge_env.jobs, "nodes": ge_env.nodes}
     json.dump(to_dump, sys.stdout, indent=2, default=lambda x: x.to_dict())
 
 
@@ -532,11 +531,14 @@ def buckets(
     output_format: Optional[str] = None,
 ) -> None:
     """Prints out autoscale bucket information, like limits etc"""
-    # ge_driver = autoscaler.new_driver(config)
+    ge_env = environment.from_qconf(config)
+    ge_driver = autoscaler.new_driver(config, ge_env)
+    config = ge_driver.preprocess_config(config)
     node_mgr = new_node_manager(config)
     specified_output_columns = output_columns
     output_columns = output_columns or [
         "nodearray",
+        "placement_group",
         "vm_size",
         "vcpu_count",
         "pcpu_count",
@@ -559,7 +561,7 @@ def buckets(
 
     filtered = _query_with_constraints(config, constraint_expr, node_mgr.get_buckets())
 
-    demand_result = DemandResult([], [f.example_node for f in filtered], [])
+    demand_result = DemandResult([], [f.example_node for f in filtered], [], [])
 
     if "all" in output_columns:
         output_columns = ["all"]
@@ -569,7 +571,8 @@ def buckets(
 
 
 def resources(config: Dict, constraint_expr: str) -> None:
-    ge_driver = autoscaler.new_driver(config)
+    ge_env = environment.from_qconf(config)
+    ge_driver = autoscaler.new_driver(config, ge_env)
     node_mgr = new_node_manager(config, existing_nodes=ge_driver)
 
     filtered = _query_with_constraints(config, constraint_expr, node_mgr.get_buckets())
@@ -692,10 +695,13 @@ def shell(config: Dict) -> None:
     """
     ctx = DefaultContextHandler("[interactive-readonly]")
 
-    ge_driver = autoscaler.new_driver(config)
-    demand_calc = autoscaler.new_demand_calculator(config, ge_driver, ctx)
+    ge_env = environment.from_qconf(config)
+    ge_driver = autoscaler.new_driver(config, ge_env)
+    config = ge_driver.preprocess_config(config)
+    ge_env = environment.from_qconf(config)
+    demand_calc = autoscaler.new_demand_calculator(config, ge_env, ge_driver, ctx)
 
-    queues = parallel_environments.read_queue_configs(config)
+    queues = ge_env.queues
 
     def gehelp() -> None:
         print("config       - dict representing autoscale configuration.")
@@ -713,10 +719,11 @@ def shell(config: Dict) -> None:
         "ge_driver": ge_driver,
         "demand_calc": demand_calc,
         "node_mgr": demand_calc.node_mgr,
-        "jobs": ge_driver.jobs,
+        "jobs": ge_env.jobs,
         "dbconn": demand_calc.node_history.conn,
         "gehelp": gehelp,
         "queues": partition_single(queues, lambda q: q.qname),
+        "ge_env": ge_env,
     }
     banner = "\nCycleCloud GE Autoscale Shell"
     interpreter = ReraiseAssertionInterpreter(locals=shell_locals)

@@ -1,28 +1,11 @@
 import math
-import re
 import socket
 from subprocess import CalledProcessError
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
 
 import six
-
-from gridengine import parallel_environments
-from gridengine.parallel_environments import (
-    FixedProcesses,
-    GridEngineQueue,
-    ParallelEnvironment,
-    read_parallel_environments,
-)
-from gridengine.util import (
-    QCONF_PATH,
-    QMOD_PATH,
-    QSTAT_PATH,
-    call,
-    check_call,
-    check_output,
-)
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
 from hpc.autoscale.job.demandcalculator import DemandCalculator
@@ -32,28 +15,46 @@ from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.constraints import (
     BaseNodeConstraint,
     NodeConstraint,
+    ReadOnlyAlias,
     XOr,
     register_parser,
 )
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import NodeManager
 from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
-from hpc.autoscale.util import partition, partition_single
+from hpc.autoscale.util import partition
+
+from gridengine import environment as envlib
+from gridengine.parallel_environments import (
+    FixedProcesses,
+    GridEngineQueue,
+    ParallelEnvironment,
+)
+from gridengine.util import (
+    QCONF_PATH,
+    QMOD_PATH,
+    QSTAT_PATH,
+    call,
+    check_call,
+    check_output,
+)
+
+
+def new_driver(
+    autoscale_config: Dict, ge_env: envlib.GridEngineEnvironment,
+) -> "GridEngineDriver":
+    return GridEngineDriver(autoscale_config, ge_env)
 
 
 class GridEngineDriver:
-    def __init__(self, autoscale_config: Dict) -> None:
+    def __init__(
+        self, autoscale_config: Dict, ge_env: envlib.GridEngineEnvironment
+    ) -> None:
         self.autoscale_config = autoscale_config
-        jobs, scheduler_nodes = self.get_jobs_and_nodes()
-        self.jobs = jobs
-        self.scheduler_nodes = scheduler_nodes
-        self.parallel_envs = read_parallel_environments(autoscale_config)
+        self.ge_env = ge_env
         self.read_only = autoscale_config.get("read_only", False)
         if self.read_only is None:
             self.read_only = False
-
-    def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
-        return _get_jobs_and_nodes(self.autoscale_config)
 
     def handle_draining(
         self, unmatched_nodes: List[SchedulerNode]
@@ -80,6 +81,9 @@ class GridEngineDriver:
                             str(e),
                         )
         return to_shutdown
+
+    def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
+        return _get_jobs_and_nodes(self.autoscale_config, self.ge_env.queues)
 
     def handle_post_delete(self, nodes_to_delete: List[Node]) -> None:
         if self.read_only:
@@ -113,11 +117,6 @@ class GridEngineDriver:
             lambda n: (n.resources.get("slot_type") or n.nodearray) + ".q",
         )
 
-        queue_configs_list = parallel_environments.read_queue_configs(
-            self.autoscale_config
-        )
-        queue_configs = partition_single(queue_configs_list, lambda q: q.qname)
-
         hostnames_to_delete: Set[str] = set()
 
         for queue_name, nodes in by_queue.items():
@@ -146,7 +145,7 @@ class GridEngineDriver:
                                     hostlist_name,
                                 ]
                             )
-                    if queue_name not in queue_configs:
+                    if queue_name not in self.ge_env.queues:
                         if queue_name != "unknown.q":
                             logging.error(
                                 "Queue %s does not exist? Ignoring node %s",
@@ -160,7 +159,7 @@ class GridEngineDriver:
                         )
                         continue
 
-                    queue_config = queue_configs[queue_name]
+                    queue_config = self.ge_env.queues[queue_name]
 
                     if hostname in queue_config.slots:
                         queue_host = "{}@{}".format(queue_name, hostname)
@@ -404,7 +403,16 @@ class GridEngineDriver:
             if node.hostname not in submit_hostnames:
                 logging.debug("Adding %s as submit host", node)
 
-                for qname in ["all.q", node.software_configuration["gridengine_qname"]]:
+                ge_qname = node.software_configuration.get("gridengine_qname", "")
+                if not ge_qname:
+                    logging.warning(
+                        "gridengine_qname is not set on %s. Ignoring.", node
+                    )
+                    return False
+
+                for qname in [
+                    "all.q",
+                ]:
                     check_call(
                         [
                             QCONF_PATH,
@@ -434,9 +442,7 @@ class GridEngineDriver:
             "Cleaning out the following hosts in state=au: %s", invalid_nodes
         )
         self.handle_post_delete(invalid_nodes)
-        self.scheduler_nodes = [
-            n for n in self.scheduler_nodes if n not in invalid_nodes
-        ]
+        self.scheduler_nodes = [n for n in self.ge_env.nodes if n not in invalid_nodes]
 
     def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -458,6 +464,19 @@ class GridEngineDriver:
             return config
         """
 
+        config["nodearrays"] = nodearrays = config.get("nodearrays", {})
+        nodearrays["default"] = default = nodearrays.get("default", {})
+        default["placement_groups"] = default_pgs = default.get("placement_groups", [])
+
+        if default_pgs:
+            return config
+
+        for gqueue in self.ge_env.queues.values():
+            for pe in gqueue.get_pes():
+                if pe:
+                    pg_name = pe.get_placement_group(gqueue.qname)
+                    if pg_name:
+                        default_pgs.append(pg_name)
         return config
 
     def preprocess_buckets(self, node_mgr: NodeManager) -> NodeManager:
@@ -476,14 +495,73 @@ class GridEngineDriver:
                 if bucket.location not in limit_regions:
                     bucket.enabled = False
         """
+        # by_pg = partition(node_mgr.get_buckets(), lambda b: b.placement_group)
+        # for queue_config in parallel_environments.read_queue_configs():
+        #     for pe in queue_config.get_pes():
+        #         if pe.requires_placement_groups:
+        #             placement_group = ht.PlacementGroup("{}_{}".format(ge_queue.qname, pe.name))
+        #             placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
+        #             """
+        #         Just pre-declare the pgs in the autoscale config!
+        #         """
+        #             if placement_group not in by_pg:
+        #                 node_mgr._add_bucket()
+
         return node_mgr
+
+    def preprocess_node_mgr(self, node_mgr: NodeManager) -> NodeManager:
+        """
+            # A toy example: disable all but certain regions given
+            # time of day
+            import time
+            now = time.localtime()
+            if now.tm_hour < 9:
+                limit_regions = ["westus", "westus2"]
+            else:
+                limit_regions = ["eastus"]
+
+            for bucket in node_mgr.get_buckets():
+
+                if bucket.location not in limit_regions:
+                    bucket.enabled = False
+        """
+
+        return node_mgr
+
+    def preprocess_demand_calculator(self, dcalc: DemandCalculator) -> DemandCalculator:
+        """
+            dcalc.allocate({})
+        """
+
+        return dcalc
+
+    def postprocess_demand_calculator(
+        self, dcalc: DemandCalculator
+    ) -> DemandCalculator:
+        """
+            # simple example to ensure there are at least 100 nodes
+            minimum = 100
+            to_allocate = minimum - len(dcalc.get_nodes())
+            if to_allocate > 0:
+                result = dcalc.allocate(
+                    {"node.nodearray": "htc", "exclusive": 1}, node_count=to_allocate
+                )
+                if not result:
+                    logging.warning("Failed to allocate minimum %s", result)
+                else:
+                    logging.info(
+                        "Allocated %d more nodes to reach minimum %d", to_allocate, minimum
+                    )
+        """
+        return dcalc
 
     def new_node_queue(self) -> NodeQueue:
         return GENodeQueue()
 
     def __str__(self) -> str:
+        # TODO RDH
         return "GEDriver(jobs={}, scheduler_nodes={})".format(
-            self.jobs[:100], self.scheduler_nodes[:100]
+            self.ge_env.jobs[:100], self.ge_env.nodes[:100]
         )
 
     def __repr__(self) -> str:
@@ -505,7 +583,7 @@ def _getr(e: Any, attr_name: str) -> str:
 
 
 def _get_jobs_and_nodes(
-    autoscale_config: Dict,
+    autoscale_config: Dict, ge_queues: Dict[str, GridEngineQueue],
 ) -> Tuple[List[Job], List[SchedulerNode]]:
     # some magic here for the args
     # -g d -- show all the tasks, do not group
@@ -525,9 +603,6 @@ def _get_jobs_and_nodes(
     doc = ElementTree.parse(raw_xml_file)
     root = doc.getroot()
 
-    ge_queues = partition_single(
-        parallel_environments.read_queue_configs(autoscale_config), lambda q: q.qname
-    )
     nodes, running_jobs = _parse_scheduler_nodes(root, ge_queues)
     pending_jobs = _parse_jobs(root, ge_queues)
     return running_jobs + pending_jobs, nodes
@@ -542,6 +617,7 @@ def _parse_scheduler_nodes(
     compute_nodes: Dict[str, SchedulerNode] = {}
 
     elems = list(root.findall("queue_info/Queue-List"))
+    log_warnings = set()
 
     def keyfunc(e: Element) -> str:
         try:
@@ -597,6 +673,13 @@ def _parse_scheduler_nodes(
 
             if complex is None:
                 resources[resource_name] = text
+                if resource_name not in log_warnings:
+                    logging.warning(
+                        "Unknown resource %s. This will be treated as a string internally and "
+                        + "may cause issues with grid engine's ability to schedule this job.",
+                        resource_name,
+                    )
+                    log_warnings.add(resource_name)
             else:
                 resources[resource_name] = complex.parse(text)
                 resources[complex.shortcut] = resources[resource_name]
@@ -644,9 +727,9 @@ def _parse_jobs(root: Element, ge_queues: Dict[str, GridEngineQueue]) -> List[Jo
     autoscale_jobs: List[Job] = []
 
     for jijle in root.findall("job_info/job_list"):
-        job = _parse_job(jijle, ge_queues)
-        if job:
-            autoscale_jobs.append(job)
+        jobs = _parse_job(jijle, ge_queues)
+        if jobs:
+            autoscale_jobs.extend(jobs)
 
     return autoscale_jobs
 
@@ -658,6 +741,8 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
 
     if not requested_queues:
         requested_queues = ["all.q"]
+
+    log_warnings = set()
 
     job_id = _getr(jijle, "JB_job_number")
     slots = int(_getr(jijle, "slots"))
@@ -686,6 +771,7 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
         num_tasks = _parse_tasks(tasks_expr)
 
     constraints: List[Dict] = [{"slots": slots}] + ge_queue.constraints
+    alias_constraints: List[Dict] = []
 
     job_resources: Dict[str, str] = {}
 
@@ -699,39 +785,60 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
         resource_name = req.attrib["name"]
         complex = ge_queue.complexes.get(resource_name)
         if not complex:
+            if resource_name not in log_warnings:
+                logging.warning(
+                    "Unknown resource %s. This will be treated as a string internally and "
+                    + "may cause issues with grid engine's ability to schedule this job.",
+                    resource_name,
+                )
+                log_warnings.add(resource_name)
             req_value: Any = req.text
         else:
             req_value = complex.parse(req.text)
 
-        constraints.append({resource_name: req_value})
+        if complex and complex.shortcut != complex.name and complex.relop != "EXCL":
+            # create an alias for the shortcut
+            if resource_name == complex.shortcut:
+                resource_name = complex.shortcut
+            alias_constraints.append(ReadOnlyAlias(complex.shortcut, complex.name))
+            # else:
+            #     alias_constraints.append(ReadOnlyAlias(complex.name, complex.shortcut))
+
+        if complex and complex.name == "slots":
+            # ensure we don't double count slots if someone specifies it
+            constraints[0]["slots"] = req_value
+        else:
+            constraints.append({resource_name: req_value})
         job_resources[resource_name] = req_value
 
-        if complex and complex.shortcut != complex.name:
-            constraints.append({complex.shortcut: req_value})
-            job_resources[complex.shortcut] = req_value
+    jobs: List[Job]
 
-    job: Job
+    constraints.extend(alias_constraints)
 
     pe_elem = jijle.find("requested_pe")
     if pe_elem is not None:
         # dealing with parallel jobs (qsub -pe ) is much more complicated
-        job = _pe_job(ge_queue, pe_elem, job_id, constraints, slots, num_tasks)
-        if job is None:
+        pe_jobs = _pe_job(ge_queue, pe_elem, job_id, constraints, slots, num_tasks)
+        if pe_jobs is None:
             return None
+        else:
+            jobs = pe_jobs
     else:
         constraints.append(
             QueueAndHostgroupConstraint(
                 ge_queue.qname, list(ge_queue.hostlist_groups), None
             )
         )
-        job = Job(job_id, constraints, iterations=num_tasks)
+        jobs = [Job(job_id, constraints, iterations=num_tasks)]
 
-    job.metadata["gridengine"] = {
-        "resources": job_resources,
-    }
+    for job in jobs:
+        job.metadata["gridengine"] = {
+            "resources": job_resources,
+        }
 
-    job.metadata["job_state"] = job_state
-    return job
+        job.metadata["job_state"] = job_state
+
+    return jobs
 
 
 def _pe_job(
@@ -741,10 +848,13 @@ def _pe_job(
     constraints: List[Dict],
     slots: int,
     num_tasks: int,
-) -> Optional[Job]:
+) -> Optional[List[Job]]:
     pe_name_expr = pe_elem.attrib["name"]
+    array_size = num_tasks
+
     assert pe_name_expr, "{} has no attribute 'name'".format(pe_elem)
     assert pe_elem.text, "{} has no body".format(pe_elem)
+
     if not ge_queue.has_pe(pe_name_expr):
         logging.error(
             "Queue %s does not support pe %s. Ignoring job %s",
@@ -769,11 +879,8 @@ def _pe_job(
         hostgroups = ge_queue.get_hostgroups_for_pe(pe.name)
         pe_count = int(pe_elem.text)
 
-        if pe.requires_placement_groups:
-            placement_group = ht.PlacementGroup("{}_{}".format(ge_queue.qname, pe.name))
-            placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
-        else:
-            placement_group = None
+        # optional - can  be None if this is an htc style bucket.
+        placement_group = pe.get_placement_group(ge_queue.qname)
 
         queue_and_hostgroup_constraints.append(
             QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, placement_group)
@@ -784,27 +891,46 @@ def _pe_job(
     else:
         constraints.append(queue_and_hostgroup_constraints[0])
 
+    job_constructor: Callable[[str], Job]
+
     if pe.is_fixed:
         assert isinstance(pe.allocation_rule, FixedProcesses)
         alloc_rule: FixedProcesses = pe.allocation_rule  # type: ignore
         constraints[0]["slots"] = alloc_rule.fixed_processes
-        num_tasks = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
-        return Job(job_id, constraints, iterations=num_tasks, colocated=True)
+        num_nodes = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
+
+        def job_constructor(job_id: str) -> Job:
+            return Job(job_id, constraints, node_count=num_nodes, colocated=True)
 
     elif pe.allocation_rule.name == "$pe_slots":
         constraints[0]["slots"] = pe_count
-        return Job(job_id, constraints, iterations=num_tasks)
+        # this is not colocated, so we can skip the redirection
+        return [Job(job_id, constraints, iterations=num_tasks)]
 
     elif pe.allocation_rule.name == "$round_robin":
         constraints[0]["slots"] = 1
-        constraints.append({"exclusive": True})
-        num_tasks = slots
-        return Job(job_id, constraints, iterations=num_tasks, colocated=True)
+
+        def job_constructor(job_id: str) -> Job:
+            return Job(
+                job_id,
+                constraints,
+                node_count=slots,
+                colocated=True,
+                packing_strategy="scatter",
+            )
 
     elif pe.allocation_rule.name == "$fill_up":
         constraints[0]["slots"] = 1
-        num_tasks = pe_count * num_tasks
-        return Job(job_id, constraints, iterations=num_tasks, colocated=True)
+
+        def job_constructor(job_id: str) -> Job:
+            return Job(
+                job_id,
+                constraints,
+                iterations=pe_count,
+                colocated=True,
+                packing_strategy="pack",
+            )
+
     else:
         # this should never happen
         logging.error(
@@ -814,72 +940,14 @@ def _pe_job(
         )
         return None
 
-    def preprocess_node_mgr(self, node_mgr: NodeManager) -> NodeManager:
-        """
-            # A toy example: disable all but certain regions given
-            # time of day
-            import time
-            now = time.localtime()
-            if now.tm_hour < 9:
-                limit_regions = ["westus", "westus2"]
-            else:
-                limit_regions = ["eastus"]
+    if array_size == 1:
+        # not an array, do the simple thing
+        return [job_constructor(job_id)]
 
-            for bucket in node_mgr.get_buckets():
-
-                if bucket.location not in limit_regions:
-                    bucket.enabled = False
-        """
-        return node_mgr
-
-    def preprocess_demand_calculator(self, dcalc: DemandCalculator) -> DemandCalculator:
-        """
-            dcalc.allocate({})
-        """
-
-        return dcalc
-
-    def postprocess_demand_calculator(
-        self, dcalc: DemandCalculator
-    ) -> DemandCalculator:
-        """
-            # simple example to ensure there are at least 100 nodes
-            minimum = 100
-            to_allocate = minimum - len(dcalc.get_nodes())
-            if to_allocate > 0:
-                result = dcalc.allocate(
-                    {"node.nodearray": "htc", "exclusive": 1}, node_count=to_allocate
-                )
-                if not result:
-                    logging.warning("Failed to allocate minimum %s", result)
-                else:
-                    logging.info(
-                        "Allocated %d more nodes to reach minimum %d", to_allocate, minimum
-                    )
-        """
-        return dcalc
-
-    def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-            # set site specific defaults. In this example, slots are defined
-            # as the number of gigs per node.
-            from hpc.autoscale import hpctypes as ht
-
-            config["gridengine"] = ge_config = config.get("gridengine", {})
-            if not ge_config.get("default_resources"):
-                one_gig = ht.Memory.value_of("1g")
-                ge_config["default_resources"] = [
-                    {
-                        "select": {},
-                        "name": "slots",
-                        "value": lambda node: node.memory // one_gig,
-                    }
-                ]
-
-            return config
-        """
-
-        return config
+    ret = []
+    for t in range(array_size):
+        ret.append(job_constructor("{}.{}".format(job_id, t)))
+    return ret
 
 
 class QueueAndHostgroupConstraint(BaseNodeConstraint):
@@ -974,11 +1042,11 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
         assert node_hostgroups == self.hostgroups_set
 
         node.available["_gridengine_hostgroups"] = sorted(list(node_hostgroups))
-        assert (
-            node.placement_group is None
-            or node.placement_group == self.placement_group,
-            "placement group %s != %s" % (node.placement_group, self.placement_group),
-        )
+        assert node.placement_group in [
+            None,
+            self.placement_group,
+        ], "placement group %s != %s" % (node.placement_group, self.placement_group)
+
         node.placement_group = self.placement_group
 
         if not node.exists:

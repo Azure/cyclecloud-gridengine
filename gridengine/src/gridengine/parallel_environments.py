@@ -1,15 +1,20 @@
 # for backwards compatability, this is a global var instead of an argument
 # to sge_job_handler.
 import re
+import typing
 from abc import ABC, abstractmethod
 from shutil import which
 from typing import Any, Dict, List, Optional, Union
 
-from gridengine.util import check_output
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
 from hpc.autoscale.node.constraints import Constraint
 from hpc.autoscale.util import partition_single
+
+from gridengine.util import check_output
+
+if typing.TYPE_CHECKING:
+    from gridengine.environment import GridEngineEnvironment
 
 QCONF_PATH = which("qconf") or ""
 
@@ -51,50 +56,19 @@ def read_parallel_environments(
     return _PE_CACHE
 
 
-def initialize(
-    autoscale_config: Dict[str, str],
-    complex_path: str,
-    pe_paths: Dict[str, str],
-    qconfigs: Dict[str, Dict[str, str]],
-) -> None:
-    global _COMPLEX_CACHE
-    _QUEUE_CACHE.clear()
-    _PE_CACHE.clear()
-
-    with open(complex_path) as fr:
-        _COMPLEX_CACHE = _parse_complexes(autoscale_config, fr.readlines())
-
-    for pe_name, pe_path in pe_paths.items():
-        with open(pe_path) as fr:
-            pe_config = _parse_ge_config(fr.readlines())
-            pe_config["pe_name"] = pe_name
-            pe = ParallelEnvironment(pe_config)
-            _PE_CACHE[pe.name] = pe
-
-    for qname, qconfig in qconfigs.items():
-        _QUEUE_CACHE.append(GridEngineQueue(qconfig, autoscale_config, []))
-
-
-def read_queue_configs(autoscale_config: Dict) -> List["GridEngineQueue"]:
-    global _QUEUE_CACHE
-    if _QUEUE_CACHE:
-        return _QUEUE_CACHE
-
+def read_queue_configs(autoscale_config: Dict, ge_env: "GridEngineEnvironment") -> None:
     qnames = check_output([QCONF_PATH, "-sql"]).decode().split()
-    ge_queues = []
+
     logging.debug("Found %d queues: %s", len(qnames), " ".join(qnames))
     autoscale_queues_config = autoscale_config.get("gridengine", {}).get("queues", {})
+
     for qname in qnames:
         lines = check_output([QCONF_PATH, "-sq", qname]).decode().splitlines()
         queue_config = _parse_ge_config(lines)
         queue_constraints = autoscale_queues_config.get(queue_config["qname"], {}).get(
             "constraints", []
         )
-        ge_queues.append(
-            GridEngineQueue(queue_config, autoscale_config, queue_constraints)
-        )
-    _QUEUE_CACHE = ge_queues
-    return _QUEUE_CACHE
+        ge_env.queues[qname] = GridEngineQueue(queue_config, ge_env, queue_constraints)
 
 
 def set_complexes(autoscale_config: Dict, complex_lines: List[str]) -> None:
@@ -205,14 +179,33 @@ def _parse_ge_config(lines: List[str]) -> Dict[str, str]:
     return config
 
 
+def new_gridenging_queue(
+    qname: str,
+    hostlist: List[str],
+    pe_list: List[str],
+    constraints: List[Constraint],
+    slots_expr: str,
+    ge_env: "GridEngineEnvironment",
+) -> "GridEngineQueue":
+    assert isinstance(hostlist, list)
+    queue_config = {
+        "qname": qname,
+        "hostlist": " ".join(hostlist),
+        "pe_list": " ".join(pe_list),
+        "slots": slots_expr,
+    }
+    return GridEngineQueue(queue_config, ge_env, constraints)
+
+
 class GridEngineQueue:
     def __init__(
         self,
-        queue_config: Dict[str, str],
-        autoscale_config: Dict[str, str],
+        queue_config: Dict,
+        ge_env: "GridEngineEnvironment",
         constraints: List[Constraint],
     ) -> None:
         self.queue_config = queue_config
+        self.ge_env = ge_env
         if isinstance(constraints, dict):
             constraints = [constraints]
 
@@ -225,13 +218,12 @@ class GridEngineQueue:
         self.constraints = constraints
         self.__hostlist = self.queue_config["hostlist"].split(",")
         self.__pe_to_hostgroups: Dict[str, List[str]] = {}
-        self.__complexes = read_complexes(autoscale_config)
-        self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
         self._pe_keys_cache: Dict[str, List[str]] = {}
-        all_pes = read_parallel_environments(autoscale_config)
+        self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
         self.__slots = {}
 
-        for tok in self.queue_config.get("slots", "").split(","):
+        slot_toks = re.split(",| +", self.queue_config.get("slots", ""))
+        for tok in slot_toks:
             if "[" not in tok:
                 continue
             tok = tok.replace("[", "").replace("]", "")
@@ -258,17 +250,18 @@ class GridEngineQueue:
                 hostgroup, pe_name = tok.split("=", 1)
                 hostgroups = [hostgroup]
 
-            if pe_name not in all_pes:
+            if pe_name not in ge_env.pes:
                 logging.warning(
                     "Parallel environment %s was not found - %s. Skipping",
                     pe_name,
-                    list(all_pes.keys()),
+                    list(ge_env.pes.keys()),
                 )
                 continue
             assert pe_name not in self.__pe_to_hostgroups
             self.__pe_to_hostgroups[pe_name] = hostgroups
-            self.__parallel_environments[pe_name] = all_pes[pe_name]
-        assert self.__parallel_environments, queue_config["pe_list"]
+            self.__parallel_environments[pe_name] = ge_env.pes[pe_name]
+        if queue_config["pe_list"]:
+            assert self.__parallel_environments, queue_config["pe_list"]
 
     @property
     def qname(self) -> str:
@@ -288,7 +281,8 @@ class GridEngineQueue:
 
     @property
     def complexes(self) -> Dict[str, "Complex"]:
-        return self.__complexes
+        # TODO RDH should not need this here
+        return self.ge_env.complexes
 
     def has_pe(self, pe_name: str) -> bool:
         return bool(self._pe_keys(pe_name))
@@ -304,6 +298,7 @@ class GridEngineQueue:
             ret = []
 
             for key in self.__parallel_environments:
+
                 if pe_name_re.match(key):
                     ret.append(key)
 
@@ -311,7 +306,10 @@ class GridEngineQueue:
 
         return self._pe_keys_cache[pe_name]
 
-    def get_pes(self, pe_name: str) -> List["ParallelEnvironment"]:
+    def get_pes(self, pe_name: Optional[str] = None) -> List["ParallelEnvironment"]:
+        if pe_name is None:
+            return list(self.__parallel_environments.values())
+
         if not self.has_pe(pe_name):
             raise RuntimeError(
                 "Queue {} does not support parallel_environment {}".format(
@@ -330,6 +328,15 @@ class GridEngineQueue:
 
         return self.__pe_to_hostgroups[pe_name]
 
+    def get_placement_groups(self) -> List[str]:
+        ret = []
+        for pe in self.__parallel_environments.values():
+            if pe.requires_placement_groups:
+                placement_group = ht.PlacementGroup("{}_{}".format(self.qname, pe.name))
+                placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
+                ret.append(placement_group)
+        return ret
+
     def __str__(self) -> str:
         return "GridEnineQueue(qname={}, pes={}, hostlist={})".format(
             self.qname, list(self.__parallel_environments.keys()), self.hostlist
@@ -337,6 +344,17 @@ class GridEngineQueue:
 
     def __repr__(self) -> str:
         return str(self)
+
+
+def new_parallel_environment(
+    pe_name: str, slots: int, allocation_rule: "AllocationRule"
+) -> "ParallelEnvironment":
+    config = {
+        "pe_name": pe_name,
+        "slots": str(slots),
+        "allocation_rule": allocation_rule.name,
+    }
+    return ParallelEnvironment(config)
 
 
 class ParallelEnvironment:
@@ -363,6 +381,14 @@ class ParallelEnvironment:
     @property
     def is_fixed(self) -> bool:
         return self.allocation_rule.is_fixed
+
+    def get_placement_group(self, qname: str) -> Optional[str]:
+        if self.requires_placement_groups:
+            placement_group = ht.PlacementGroup("{}_{}".format(qname, self.name))
+            placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
+            return placement_group
+
+        return None
 
     def __repr__(self) -> str:
         return "ParallelEnvironment(name=%s, slots=%s, alloc=%s, pg=%s)" % (
@@ -484,8 +510,17 @@ class Complex:
                 return int(value)
 
             elif self.complex_type == "BOOL":
-                return bool(float(value))
-
+                try:
+                    return bool(float(value))
+                except ValueError:
+                    if value.lower() in ["true", "false"]:
+                        return value.lower() == "true"
+                    else:
+                        logging.warning(
+                            "Could not parse '%s' for complex type %s - treating as string.",
+                            value, self.complex_type,
+                        )
+                    return value
             elif self.complex_type == "DOUBLE":
                 return float(value)
 

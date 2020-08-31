@@ -2,17 +2,19 @@ import json
 import os
 from typing import Dict, List, Optional, Tuple
 
-from gridengine.driver import GridEngineDriver
-from gridengine.util import check_output
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.util import partition_single
 
+from gridengine.driver import GridEngineDriver
+from gridengine.environment import GridEngineEnvironment
+from gridengine.util import check_output
+
 
 class DeferredDriver(GridEngineDriver):
-    def __init__(self, autoscale_config: Dict) -> None:
+    def __init__(self, autoscale_config: Dict, ge_env: GridEngineEnvironment) -> None:
 
         cyclecloud_home = os.getenv("CYCLECLOUD_HOME", "/opt/cycle/jetpack")
         default_dir = os.path.join(
@@ -31,7 +33,7 @@ class DeferredDriver(GridEngineDriver):
 
         logging.warning("Overriding driver with scripts is an experimental feature.")
 
-        super().__init__(autoscale_config)
+        super().__init__(autoscale_config, ge_env)
 
     def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
         script = os.path.join(self.scripts_dir, "get_jobs_and_nodes.sh")

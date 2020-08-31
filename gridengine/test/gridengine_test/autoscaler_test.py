@@ -1,191 +1,367 @@
-from copy import deepcopy
-from typing import Any, List, Optional
+import os
+from typing import Dict, List, Optional
 
-from gridengine import autoscaler, parallel_environments
-from gridengine.driver import QueueAndHostgroupConstraint
-from gridengine_test import mock_driver
 from hpc.autoscale import hpclogging
 from hpc.autoscale.ccbindings.mock import MockClusterBinding
-from hpc.autoscale.job import demandprinter
-from hpc.autoscale.job.demand import DemandResult
+from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.job.job import Job
-from hpc.autoscale.job.schedulernode import SchedulerNode
-from hpc.autoscale.node.constraints import Or
-from hpc.autoscale.node.nodehistory import NullNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
+from hpc.autoscale.util import partition, partition_single
+
+from gridengine import autoscaler, parallel_environments
+from gridengine.environment import GridEngineEnvironment
+from gridengine.parallel_environments import FillUp, FixedProcesses, RoundRobin
+from gridengine.parallel_environments import new_gridenging_queue as new_gequeue
+from gridengine.parallel_environments import new_parallel_environment as new_pe
+from gridengine_test import mock_driver
+
+SLOTS_COMPLEX = parallel_environments.Complex(
+    "slots", "s", "INT", "<=", True, True, "1", 1000
+)
+MFREE_COMPLEX = parallel_environments.Complex(
+    "m_mem_free", "mfree", "MEMORY", "<=", True, True, "0", 0
+)
+EXCL_COMPLEX = parallel_environments.Complex(
+    "exclusive", "excl", "BOOL", "EXCL", True, True, "0", 1000
+)
+CONTEXT = DefaultContextHandler("[default]")
 
 
-def test_basic() -> None:
+def setup_module() -> None:
+    hpclogging.initialize_logging(mock_config(None))
+    register_result_handler(CONTEXT)
 
-    with open("conf/complexes") as fr:
-        parallel_environments.set_complexes({}, fr.readlines())
+
+def test_non_exclusive_htc_arrays() -> None:
+    # ask for exactly the available count 10
+    common_cluster_test(["-l nodearray=htc -t 1-40  -q htc.q sleep.sh"], htc=10)
+
+    # ask for more than 10, hit limit
+    common_cluster_test(["-t 1-44  -q htc.q sleep.sh"], htc=10)
+
+    # ask for over the limit across two jobs
+    common_cluster_test(
+        [
+            "-l nodearray=htc -t 1-40  -q htc.q sleep.sh",
+            "-l nodearray=htc -t 1-40  -q htc.q sleep.sh",
+        ],
+        htc=10,
+    )
+    common_cluster_test(
+        [
+            "-l nodearray=htc -t 1-30  -q htc.q sleep.sh",
+            "-l nodearray=htc -t 1-30  -q htc.q sleep.sh",
+        ],
+        htc=10,
+    )
+    common_cluster_test(
+        [
+            "-l nodearray=htc -t 1-30  -q htc.q sleep.sh",
+            "-l nodearray=htc -t 1-30  -q htc.q sleep.sh",
+            "-l nodearray=htc -q htc.q sleep.sh",
+        ],
+        htc=10,
+    )
+
+    # # ask for exactly the num slots
+    common_cluster_test(["-t 1-4  -q htc.q sleep.sh"], htc=1)
+    # same, except split across two jobs
+    common_cluster_test(2 * ["-t 1-2  -q htc.q sleep.sh"], htc=1)
+
+
+def test_non_exclusive_htc_jobs() -> None:
+    # ask for exactly the available count 10
+    # 4 2gb slots with an 8gb vm_size
+    common_cluster_test(1 * ["-l mfree=2g -q htc.q sleep.sh"], htc=1)
+    common_cluster_test(4 * ["-l mfree=2g -q htc.q sleep.sh"], htc=1)
+    common_cluster_test(5 * ["-l mfree=2g -q htc.q sleep.sh"], htc=2)
+    common_cluster_test(8 * ["-l mfree=2g -q htc.q sleep.sh"], htc=2)
+    common_cluster_test(1 * ["-l slots=2 -q htc.q sleep.sh"], htc=1)
+    common_cluster_test(2 * ["-l slots=2 -q htc.q sleep.sh"], htc=1)
+    common_cluster_test(3 * ["-l slots=2 -q htc.q sleep.sh"], htc=2)
+    common_cluster_test(4 * ["-l slots=2 -q htc.q sleep.sh"], htc=2)
+    # ask for 100 jobs. We only have 10 4 slot nodes though.
+    common_cluster_test(100 * ["-l slots=2 -q htc.q sleep.sh"], htc=10)
+
+
+def test_complex_shortcut() -> None:
+    # make sure that if a user mixes the shortcut and long form
+    # we still handle that.
+    dcalc = common_cluster_test(
+        [
+            "-l m_mem_free=2g -q htc.q sleep.sh",
+            "-l m_mem_free=2g -q htc.q sleep.sh",
+            "-l m_mem_free=2g -q htc.q sleep.sh",
+            "-l mfree=2g      -q htc.q sleep.sh",
+            "-l mfree=2g      -q htc.q sleep.sh",
+            "-l mfree=2g      -q htc.q sleep.sh",
+        ],
+        htc=2,
+    )
+    new_nodes = dcalc.get_demand().new_nodes
+    by_name = partition_single(new_nodes, lambda n: n.name)
+
+    assert by_name["htc-1"].resources["m_mem_free"] == 8 * 1024
+    assert by_name["htc-1"].resources["mfree"] == 8 * 1024
+    assert by_name["htc-1"].available["m_mem_free"] == 0
+    assert by_name["htc-1"].available["mfree"] == 0
+
+    assert by_name["htc-2"].resources["m_mem_free"] == 8 * 1024
+    assert by_name["htc-2"].resources["mfree"] == 8 * 1024
+    assert by_name["htc-2"].available["m_mem_free"] == 6 * 1024
+    assert by_name["htc-2"].available["mfree"] == 6 * 1024
+
+
+def test_round_robin() -> None:
+    # first test with RoundRobin (rr*)
+    # ask for more than the available count 100
+    common_cluster_test(["-l exclusive=1 -pe rr* 101  -q hpc.q sleep.sh"])
+
+    # ask for more than the max vmss size
+    common_cluster_test(["-l exclusive=1 -pe rr* 7  -q hpc.q sleep.sh"])
+
+    # ask for exactly the max vmss size
+    common_cluster_test(
+        ["-l exclusive -pe rr* 5  -q hpc.q sleep.sh"], {"hpc_q_rr2": 5}, hpc=5
+    )
+
+    # same, except split across two jobs
+    common_cluster_test(
+        [
+            "-l exclusive=true -pe rr* 2  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
+        ],
+        {"hpc_q_rr2": 5},
+        hpc=5,
+    )
+
+    # let's allocate in two different pgs
+    common_cluster_test(
+        [
+            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
+        ],
+        {"hpc_q_rr2": 3, "hpc_q_rr1": 3},
+        hpc=6,
+    )
+
+    # let's allocate in all three pgs plus reach capacity.
+    common_cluster_test(
+        ["-l exclusive=true -pe rr* 3 -q hpc.q sleep.sh"] * 4,
+        pg_counts={"hpc_q_rr2": 3, "hpc_q_rr1": 3, "hpc_q_rr0": 3},
+        hpc=9,
+    )
+
+    # same as above, but let's use an array
+    common_cluster_test(
+        ["-l exclusive=true -pe rr* 3 -t 1-4 -q hpc.q sleep.sh"],
+        pg_counts={"hpc_q_rr2": 3, "hpc_q_rr1": 3, "hpc_q_rr0": 3},
+        hpc=9,
+    )
+
+
+def test_fill_up() -> None:
+    # With FillUp, GE will spread the processes across the machines as tightly as possible.
+    # We are using an F4 here, so slots=4
+    #
+    common_cluster_test(["-l exclusive=1 -pe fu* 40  -q hpc.q sleep.sh"], pg_counts={})
+    # ask for more than the max vmss size
+    common_cluster_test(["-l exclusive=1 -pe fu* 28  -q hpc.q sleep.sh"], pg_counts={})
+
+    # ask for exactly the max vmss size
+    common_cluster_test(
+        ["-l exclusive=1 -pe fu* 20  -q hpc.q sleep.sh"],
+        pg_counts={"hpc_q_fu2": 5},
+        hpc=5,
+    )
+
+    # same, except split across two jobs
+    common_cluster_test(
+        [
+            "-l exclusive=true -pe fu* 8  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe fu* 12  -q hpc.q sleep.sh",
+        ],
+        pg_counts={"hpc_q_fu2": 5},
+        hpc=5,
+    )
+
+    # let's allocate in two different pgs
+    common_cluster_test(
+        [
+            "-l exclusive=true -pe fu* 12  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe fu* 12  -q hpc.q sleep.sh",
+        ],
+        pg_counts={"hpc_q_fu2": 3, "hpc_q_fu1": 3},
+        hpc=6,
+    )
+
+    # let's allocate in all three pgs plus reach capacity.
+    common_cluster_test(
+        ["-l exclusive=true -pe fu* 12 -q hpc.q sleep.sh"] * 4,
+        pg_counts={"hpc_q_fu2": 3, "hpc_q_fu1": 3, "hpc_q_fu0": 3},
+        hpc=9,
+    )
+
+    # same as above, but let's use an array
+    common_cluster_test(
+        ["-l exclusive=true -pe fu* 12 -t 1-4 -q hpc.q sleep.sh"],
+        pg_counts={"hpc_q_fu2": 3, "hpc_q_fu1": 3, "hpc_q_fu0": 3},
+        hpc=9,
+    )
+
+
+def _job(qsub_cmd: str, job_id: int) -> Job:
+    ge_env = common_ge_env()
+    qsub = mock_driver.MockQsub(ge_env)
+    qsub.current_job_number = job_id
+    qsub.qsub(qsub_cmd)
+    qsub.qstat()
+    return qsub.parse_jobs()[0]
+
+
+def test_overalocation_bug() -> None:
+    # qsub -pe 'pe*' 6 -b y -q hpc.q sleep 100
+    # qsub -pe 'pe*' 4 -b y -q hpc.q sleep 100
+    # with 3 $round_robin pes
+
+    qsub_cmds = [
+        "-l exclusive=1 -pe rr* 6 -q hpc.q sleep 100",
+        "-l exclusive=1 -pe rr* 4 -q hpc.q sleep 100",
+    ]
+    dcalc = common_cluster(qsub_cmds)
+    assert len(dcalc.get_demand().new_nodes) == 4
+
+
+def mock_config(bindings: MockClusterBinding) -> Dict:
+    logging_config = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "conf", "logging.conf")
+    )
+    assert os.path.exists(logging_config), logging_config
+
+    pgs = []
+    for prefix in ["rr", "fp", "fu"]:
+        for i in range(3):
+            pgs.append("hpc_q_{}{}".format(prefix, i))
+
+    return {
+        "_mock_bindings": bindings,
+        "lock_file": None,
+        "logging": {"config_file": logging_config},
+        "default_resources": [
+            {"name": "slots", "select": {}, "value": "node.vcpu_count"},
+            {"name": "mfree", "select": {}, "value": "node.resources.memgb"},
+            {"name": "m_mem_free", "select": {}, "value": "node.resources.memgb"},
+        ],
+        "nodearrays": {"hpc": {"placement_groups": pgs}},
+    }
+
+
+def common_cluster_test(
+    qsub_commands: List[str],
+    pg_counts: Optional[Dict[str, int]] = None,
+    **array_counts: int
+) -> DemandCalculator:
+    pg_counts = pg_counts or {}
+    dcalc = common_cluster(qsub_commands)
+    demand = dcalc.get_demand()
+
+    # sanity check that we don't recreate the same node
+    partition_single(demand.new_nodes, lambda n: n.name)
+    by_array = partition(demand.new_nodes, lambda n: n.nodearray)
+    by_pg = partition(demand.new_nodes, lambda n: n.placement_group)
+    if set(by_pg.keys()) != set([None]):
+        assert not (bool(by_pg) ^ bool(pg_counts))
+
+    if pg_counts:
+        for pg_name, count in pg_counts.items():
+            assert pg_name in by_pg
+            assert (
+                len(by_pg[pg_name]) == count
+            ), "Expected pg {} to have {} nodes. Found {}".format(
+                pg_name, count, len(by_pg[pg_name])
+            )
+
+        for pg_name in by_pg:
+            assert pg_name in pg_counts
+
+    for nodearray_name, count in array_counts.items():
+        assert nodearray_name in by_array
+        assert len(by_array[nodearray_name]) == count, [
+            n.name for n in by_array[nodearray_name]
+        ]
+
+    for nodearray_name, node_list in by_array.items():
+        assert nodearray_name in array_counts
+
+    return dcalc
+
+
+def common_cluster(qsub_commands: List[str]) -> DemandCalculator:
+    ge_env = common_ge_env()
+    # allq = new_gequeue("all.q", "@allhosts", ["make"], [], complexes=complexes, parallel_envs=pes)
+
+    qsub = mock_driver.MockQsub(ge_env)
+    for qsub_cmd in qsub_commands:
+        qsub.qsub(qsub_cmd)
+
+    jobs = qsub.parse_jobs()
 
     def _bindings() -> MockClusterBinding:
         mock_bindings = MockClusterBinding()
-        mock_bindings.add_nodearray("htc", {"customer_htc_flag": True})
-        mock_bindings.add_bucket("htc", "Standard_F2", 10, 8)
-        mock_bindings.add_bucket("htc", "Standard_F4", 5, 4)
+        mock_bindings.add_nodearray("hpc", {}, max_placement_group_size=5)
+        mock_bindings.add_bucket("hpc", "Standard_F4", 100, 100)
+
+        mock_bindings.add_nodearray("htc", {}, max_count=10)
+        mock_bindings.add_bucket("htc", "Standard_F4", 10, 10)
         return mock_bindings
 
-    class SubTest:
-        def __init__(  # type: ignore
-            self,
-            scheduler_nodes=None,
-            jobs=None,
-            mock_bindings=None,
-            matched=None,
-            unmatched=None,
-            new_nodes=None,
-        ) -> None:
-            self.scheduler_nodes = scheduler_nodes or []
-            self.jobs = jobs or []
-            self.mock_bindings = mock_bindings or _bindings()
-            self.expected_matched = matched or 0
-            self.expected_unmatched = unmatched or 0
-            self.expected_new_nodes = new_nodes or 0
+    mdriver = mock_driver.MockGridEngineDriver(ge_env)
 
-        def run_test(self) -> DemandResult:
-            assert len(set([job.name for job in self.jobs])) == len(
-                self.jobs
-            ), "duplicate job id"
-            ge_driver = mock_driver.MockGridEngineDriver(
-                self.scheduler_nodes, self.jobs
-            )
+    for job in jobs:
+        ge_env.add_job(job)
 
-            config = {"_mock_bindings": self.mock_bindings, "lock_file": None}
-
-            demand_result = autoscaler.autoscale_grid_engine(
-                config, ge_driver, node_history=NullNodeHistory()
-            )
-
-            assert self.expected_unmatched == len(demand_result.unmatched_nodes)
-            assert self.expected_matched == len(demand_result.matched_nodes)
-            assert self.expected_new_nodes == len(demand_result.new_nodes)
-
-            return demand_result
-
-    def run_test(
-        scheduler_nodes: List[SchedulerNode],
-        jobs: List[Job],
-        unmatched: int,
-        matched: int,
-        new: int,
-        mock_bindings: Optional[MockClusterBinding] = None,
-    ) -> None:
-        SubTest(
-            scheduler_nodes, jobs, mock_bindings, matched, unmatched, new
-        ).run_test()
-
-    def snodes() -> List[SchedulerNode]:
-        return [SchedulerNode("ip-010A0005", {"slots": 4})]
-
-    def _xjob(jobid: str, constraints: Optional[Any] = None) -> Job:
-        constraints = constraints or []
-        if not isinstance(constraints, list):
-            constraints = [constraints]
-        constraints += [{"exclusive": True}]
-        return Job(jobid, constraints=constraints)
-
-    # fmt:off
-    run_test(snodes(), [], unmatched=1, matched=0, new=0)
-    run_test(snodes(), [_xjob("1")],                                unmatched=0, matched=1, new=0)  # noqa
-    run_test(snodes(), [_xjob("1"), _xjob("2")],                    unmatched=0, matched=2, new=1)  # noqa
-
-    run_test(snodes(), [_xjob("1", {"customer_htc_flag": False}),
-                        _xjob("2", {"customer_htc_flag": False})],  unmatched=1, matched=0, new=0)  # noqa
-
-    run_test(snodes(), [_xjob("1", {"customer_htc_flag": True}),
-                        _xjob("2", {"customer_htc_flag": True})],   unmatched=1, matched=2, new=2)  # noqa
-
-    # ok, now let's make that scheduler node something CC is managing
-    mock_bindings = _bindings()
-    mock_bindings.add_node("htc-5", "htc", "Standard_F2", hostname="ip-010A0005")
-    run_test(snodes(), [],                       unmatched=1, matched=0, new=0, mock_bindings=mock_bindings)  # noqa
-    run_test(snodes(), [_xjob("1")],             unmatched=0, matched=1, new=0, mock_bindings=mock_bindings)  # noqa
-    run_test(snodes(), [_xjob("1"), _xjob("2")], unmatched=0, matched=2, new=1, mock_bindings=mock_bindings)
-    # fmt:on
+    return autoscaler.calculate_demand(
+        mock_config(_bindings()), ge_env, mdriver, CONTEXT
+    )
 
 
-def test_hpc() -> None:
-    register_result_handler(DefaultContextHandler("[default]"))
+def common_ge_env() -> GridEngineEnvironment:
+    ge_env = GridEngineEnvironment()
+    pe_list = ["NONE"]
+    for pe_name in ["rr0", "rr1", "rr2", "fp0", "fp1", "fp2", "fu0", "fu1", "fu2"]:
+        if pe_name.startswith("rr"):
+            ge_env.add_pe(new_pe(pe_name, 0, RoundRobin()))
+        elif pe_name.startswith("fu"):
+            ge_env.add_pe(new_pe(pe_name, 0, FillUp()))
+        elif pe_name.startswith("fp"):
+            ge_env.add_pe(new_pe(pe_name, 0, FixedProcesses("2")))
+        # ge pe list syntax -> [@hostgroup=pe_name]
+        # we create one hostgroup per queue/pe_name combo
+        pe_list.append("[@hpc.q_{}={}]".format(pe_name, pe_name))
+    ge_env.add_complex(SLOTS_COMPLEX)
+    ge_env.add_complex(MFREE_COMPLEX)
+    ge_env.add_complex(EXCL_COMPLEX)
 
-    # with open("conf/complexes") as fr:
-    #     parallel_environments.set_complexes({}, fr.readlines())
-
-    def _bindings() -> MockClusterBinding:
-        mock_bindings = MockClusterBinding()
-        mock_bindings.add_nodearray("hpc1", {}, max_placement_group_size=11)
-        mock_bindings.add_bucket(
-            "hpc1",
-            "Standard_F4",
-            100,
-            100,
-            placement_groups=["hpc_q_mpislots1", "hpc_q_mpislots2"],
+    ge_env.add_queue(
+        new_gequeue(
+            qname="hpc.q",
+            hostlist=["@hpc.q"],
+            pe_list=pe_list,
+            constraints=[{"node.nodearray": "hpc"}],
+            slots_expr="",
+            ge_env=ge_env,
         )
-        mock_bindings.add_nodearray("hpc2", {}, max_placement_group_size=13)
-        mock_bindings.add_bucket(
-            "hpc2", "Standard_F2", 100, 100, placement_groups=["hpc2_q_pg0"]
+    )
+
+    ge_env.add_queue(
+        new_gequeue(
+            qname="htc.q",
+            hostlist=["@htc.q"],
+            pe_list=[],
+            constraints=[{"node.nodearray": "htc"}],
+            slots_expr="",
+            ge_env=ge_env,
         )
-        return mock_bindings
+    )
 
-    def run_test(
-        expected: int, snodes: List[SchedulerNode], *qsubs: str
-    ) -> DemandResult:
-        config = {
-            "_mock_bindings": _bindings(),
-            "lock_file": None,
-            "logging": {"config_file": "conf/logging.conf"},
-            "default_resources": [
-                {"select": {}, "name": "slots", "value": "node.vcpu_count"}
-            ],
-            "gridengine": {"relevant_complexes": ["slots", "exclusive"]},
-        }
-        hpclogging.initialize_logging(config)
-
-        parallel_environments.initialize(
-            config,
-            "conf/complexes",
-            {
-                "mpislots1": "conf/mpislots",
-                "mpislots2": "conf/mpislots",
-                "smpslots": "conf/smpslots",
-            },
-            {
-                "hpc.q": {
-                    "qname": "hpc.q",
-                    "hostlist": "@hpc.q",
-                    "pe_list": "mpislots1 mpislots2 smpslots",
-                }
-            },
-        )
-
-        qsub = mock_driver.MockQsub()
-        for qsub_cmd in qsubs:
-            qsub.qsub(qsub_cmd)
-        jobs = qsub.parse_jobs()
-        assert len(jobs) == len(qsubs)
-        import sys, json
-
-        json.dump(jobs, sys.stdout, indent=2, default=lambda x: x.to_dict())
-        ge_driver = mock_driver.MockGridEngineDriver(snodes, jobs)
-        demand_result = autoscaler.autoscale_grid_engine(
-            config, ge_driver, node_history=NullNodeHistory()
-        )
-
-        for node in demand_result.new_nodes:
-            print("HDR", node, node.placement_group, node.available["slots"])
-
-        assert expected == len(demand_result.new_nodes), "%s != %s" % (
-            expected,
-            len(demand_result.new_nodes),
-        )
-
-        return demand_result
-
-    # using F4s, so 4 cores
-    run_test(0, [], "-l exclusive -pe mpi* 14  -q hpc.q sleep.sh")
-    # run_test(0, [], "-l exclusive -pe mpi* 16  -q hpc.q sleep.sh")
-    # run_test(8, [], "-l exclusive -pe mpi* 8  -q hpc.q sleep.sh")
-
-
-test_hpc()
+    return ge_env

@@ -4,8 +4,6 @@ import sys
 from argparse import ArgumentParser
 from typing import Any, Dict, List, Optional
 
-from gridengine import parallel_environments
-from gridengine.driver import GridEngineDriver
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job import demandcalculator as dcalclib
 from hpc.autoscale.job import demandprinter
@@ -16,11 +14,16 @@ from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import SingletonLock
 
+from gridengine import environment as envlib
+from gridengine.driver import GridEngineDriver
+from gridengine.environment import GridEngineEnvironment
+
 _exit_code = 0
 
 
 def autoscale_grid_engine(
     config: Dict[str, Any],
+    ge_env: Optional[GridEngineEnvironment] = None,
     ge_driver: Optional[GridEngineDriver] = None,
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
@@ -36,10 +39,13 @@ def autoscale_grid_engine(
         # put in read only mode
         config["read_only"] = True
 
+    if ge_env is None:
+        ge_env = envlib.from_qconf(config)
+
     # interface to GE, generally by cli
     if ge_driver is None:
         # allow tests to pass in a mock
-        ge_driver = new_driver(config)
+        ge_driver = new_driver(config, ge_env)
 
     config = ge_driver.preprocess_config(config)
 
@@ -47,7 +53,7 @@ def autoscale_grid_engine(
 
     invalid_nodes = []
 
-    for node in ge_driver.scheduler_nodes:
+    for node in ge_env.nodes:
         # many combinations of a u and other states. However,
         # as long as a and u are in there it is down
         state = node.metadata.get("state", "")
@@ -56,7 +62,9 @@ def autoscale_grid_engine(
 
     ge_driver.clean_hosts(invalid_nodes)
 
-    demand_calculator = calculate_demand(config, ge_driver, ctx_handler, node_history)
+    demand_calculator = calculate_demand(
+        config, ge_env, ge_driver, ctx_handler, node_history
+    )
 
     ge_driver.handle_failed_nodes(demand_calculator.node_mgr.get_failed_nodes())
 
@@ -112,9 +120,7 @@ def autoscale_grid_engine(
 
     if nodes_to_delete:
         try:
-            logging.info(
-                "Deleting %s", nodes_to_delete,
-            )
+            logging.info("Deleting %s", [str(n) for n in nodes_to_delete])
             delete_result = demand_calculator.delete(nodes_to_delete)
 
             if delete_result:
@@ -132,6 +138,7 @@ def autoscale_grid_engine(
 
 def new_demand_calculator(
     config: Dict,
+    ge_env: Optional[GridEngineEnvironment] = None,
     ge_driver: Optional[GridEngineDriver] = None,
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
@@ -140,8 +147,11 @@ def new_demand_calculator(
     # it has two member variables - jobs
     # ge_driver.jobs - autoscale Jobs
     # ge_driver.scheduler_nodes - autoscale SchedulerNodes
+    if ge_env is None:
+        ge_env = envlib.from_qconf(config)
+
     if ge_driver is None:
-        ge_driver = new_driver(config)
+        ge_driver = new_driver(config, ge_env)
 
     if node_history is None:
         db_path = config.get("nodehistorydb")
@@ -159,7 +169,7 @@ def new_demand_calculator(
 
     return dcalclib.new_demand_calculator(
         config,
-        existing_nodes=ge_driver.scheduler_nodes,
+        existing_nodes=ge_env.nodes,
         node_history=node_history,
         node_queue=ge_driver.new_node_queue(),
         singleton_lock=singleton_lock,  # it will handle the none case
@@ -168,13 +178,14 @@ def new_demand_calculator(
 
 def calculate_demand(
     config: Dict,
+    ge_env: GridEngineEnvironment,
     ge_driver: GridEngineDriver,
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
 ) -> DemandCalculator:
 
     demand_calculator = new_demand_calculator(
-        config, ge_driver, ctx_handler, node_history
+        config, ge_env, ge_driver, ctx_handler, node_history
     )
     demand_calculator.node_mgr.add_default_resource(
         {},
@@ -192,7 +203,7 @@ def calculate_demand(
         {}, "_gridengine_hostgroups", parse_gridengine_hostgroups
     )
 
-    for name, default_complex in parallel_environments.read_complexes(config).items():
+    for name, default_complex in ge_env.complexes.items():
         if name == "slots":
             continue
 
@@ -219,7 +230,7 @@ def calculate_demand(
                 )
             )
 
-    for job in ge_driver.jobs:
+    for job in ge_env.jobs:
         if job.metadata.get("job_state") == "running":
             continue
 
@@ -270,7 +281,7 @@ def print_demand(
     return demand_result
 
 
-def new_driver(config: Dict) -> GridEngineDriver:
+def new_driver(config: Dict, ge_env: GridEngineEnvironment) -> GridEngineDriver:
     import importlib
 
     ge_config = config.get("gridengine", {})
@@ -281,7 +292,7 @@ def new_driver(config: Dict) -> GridEngineDriver:
         if ge_config.get("driver", deferred_qname) == deferred_qname:
             ge_config["driver"] = deferred_qname
 
-    driver_expr = ge_config.get("driver", "gridengine.driver.GridEngineDriver")
+    driver_expr = ge_config.get("driver", "gridengine.driver.new_driver")
 
     if "." not in driver_expr:
         raise BadDriverError(driver_expr)
@@ -300,7 +311,7 @@ def new_driver(config: Dict) -> GridEngineDriver:
         raise
 
     func_or_class = getattr(module, func_or_class_name)
-    return func_or_class(config)
+    return func_or_class(config, ge_env)
 
 
 class BadDriverError(RuntimeError):
