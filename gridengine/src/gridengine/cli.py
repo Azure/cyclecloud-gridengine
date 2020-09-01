@@ -12,6 +12,7 @@ from io import TextIOWrapper
 from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
 
 from hpc.autoscale import hpclogging as logging
+from hpc.autoscale.job import demandprinter
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.job.schedulernode import SchedulerNode
@@ -140,8 +141,44 @@ def _find_nodes(
     return ge_driver, demand_calc, found_nodes
 
 
-def test(config: Dict) -> None:
-    create_queues(config)
+def queues(config: Dict) -> None:
+    ge_env = environment.from_qconf(config)
+    schedulers = check_output([QCONF_PATH, "-sss"]).decode()
+    rows: List[List[str]] = []
+
+    for qname, ge_queue in ge_env.queues.items():
+
+        for hgrp in ge_queue.hostlist_groups:
+            fqdns = check_output([QCONF_PATH, "-shgrp", hgrp]).decode().splitlines()
+            for line in fqdns:
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line.startswith("group_name"):
+                    continue
+
+                # trim this out
+                if line.startswith("hostlist "):
+                    line = line[len("hostlist ") :]  # noqa: E203
+
+                for fqdn_expr in line.split():
+                    fqdn_expr = fqdn_expr.strip()
+                    if not fqdn_expr or fqdn_expr == "\\":
+                        continue
+                    host = fqdn_expr.split(".")[0]
+
+                    if host in schedulers:
+                        continue
+
+                    rows.append([qname, hgrp, host])
+
+    demandprinter.print_rows(
+        columns=["QNAME", "HOSTGROUP", "HOSTNAME"],
+        rows=rows,
+        stream=sys.stdout,
+        output_format="table",
+    )
 
 
 def _master_hostname(config: Dict) -> str:
@@ -901,6 +938,7 @@ def main(argv: Iterable[str] = None) -> None:
     help_msg.write("\nadvanced usage:")
     add_parser("amend_queue_config", amend_queue_config, read_only=False)
     add_parser("create_queues", create_queues, read_only=False)
+    add_parser("queues", queues, read_only=True)
     add_parser("shell", shell)
 
     parser.usage = help_msg.getvalue()
