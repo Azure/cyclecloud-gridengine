@@ -185,17 +185,17 @@ class GridEngineDriver:
         # delete the hosts. If you don't do this, it will complain that the hosts
         # are still referenced.
         try:
-            for hostname in hostnames_to_delete:
-                if hostname in admin_hosts:
-                    call([QCONF_PATH, "-dh", node.hostname])
+            for host_to_delete in hostnames_to_delete:
+                if host_to_delete in admin_hosts:
+                    call([QCONF_PATH, "-dh", host_to_delete])
 
-                if hostname in submit_hosts:
-                    call([QCONF_PATH, "-ds", node.hostname])
+                if host_to_delete in submit_hosts:
+                    call([QCONF_PATH, "-ds", host_to_delete])
 
-                if hostname in exec_hosts:
-                    call([QCONF_PATH, "-de", node.hostname])
+                if host_to_delete in exec_hosts:
+                    call([QCONF_PATH, "-de", host_to_delete])
                 else:
-                    logging.warning("%s not in %s", hostname, exec_hosts)
+                    logging.warning("%s not in %s", host_to_delete, exec_hosts)
         except CalledProcessError as e:
             logging.warning(str(e))
 
@@ -297,6 +297,7 @@ class GridEngineDriver:
     ) -> bool:
         # this is the very last thing we do, so this is basically 'committing'
         # the node.
+
         if node.hostname in submit_hostnames:
             return False
 
