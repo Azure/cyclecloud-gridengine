@@ -216,7 +216,7 @@ class GridEngineQueue:
             constraints = [{"node.nodearray": self.qname}]
 
         self.constraints = constraints
-        self.__hostlist = self.queue_config["hostlist"].split(",")
+        self.__hostlist = re.split(",| +", self.queue_config["hostlist"])
         self.__pe_to_hostgroups: Dict[str, List[str]] = {}
         self._pe_keys_cache: Dict[str, List[str]] = {}
         self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
