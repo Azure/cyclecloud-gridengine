@@ -116,7 +116,14 @@ def autoscale_grid_engine(
             ge_driver.handle_draining(unmatched_for_5_mins) or []
         )
 
-    nodes_to_delete = timed_out_to_deleted + unmatched_nodes_to_delete
+    nodes_to_delete = []
+    for node in timed_out_to_deleted + unmatched_nodes_to_delete:
+        if node.assignments:
+            logging.warning(
+                "%s has jobs assigned to it so we will take no action.", node
+            )
+            continue
+        nodes_to_delete.append(node)
 
     if nodes_to_delete:
         try:
