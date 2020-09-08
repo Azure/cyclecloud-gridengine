@@ -2,14 +2,11 @@ import code
 import io
 import json
 import os
-import socket
+import re
 import sys
-import tempfile
 import typing
 from argparse import ArgumentParser
-from copy import deepcopy
-from io import TextIOWrapper
-from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, TextIO, Tuple
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job import demandprinter
@@ -20,16 +17,29 @@ from hpc.autoscale.node.bucket import NodeBucket
 from hpc.autoscale.node.constraints import NodeConstraint, get_constraints
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import new_node_manager
-from hpc.autoscale.results import DefaultContextHandler, register_result_handler
-from hpc.autoscale.util import partition, partition_single
+from hpc.autoscale.results import (
+    DefaultContextHandler,
+    MatchResult,
+    register_result_handler,
+)
+from hpc.autoscale.util import partition_single
 
-from gridengine import autoscaler, environment, parallel_environments
-from gridengine.driver import QCONF_PATH, GridEngineDriver, check_call, check_output
+from gridengine import autoscaler, environment, parallel_environments, validate
+from gridengine.driver import (
+    QCONF_PATH,
+    GridEngineDriver,
+    QueueAndHostgroupConstraint,
+    check_output,
+)
 
 
 def error(msg: Any, *args: Any) -> None:
     print(str(msg) % args, file=sys.stderr)
     sys.exit(1)
+
+
+def warn(msg: Any, *args: Any) -> None:
+    print(str(msg) % args, file=sys.stderr)
 
 
 def autoscale(
@@ -66,7 +76,11 @@ def drain_node(
 
 
 def delete_nodes(
-    config: Dict, hostnames: List[str], node_names: List[str], force: bool = False
+    config: Dict,
+    hostnames: List[str],
+    node_names: List[str],
+    force: bool = False,
+    do_delete: bool = True,
 ) -> None:
     """Deletes node, including draining post delete handling"""
     ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
@@ -81,6 +95,11 @@ def delete_nodes(
                     node.assignments,
                 )
 
+            if node.keep_alive:
+                error(
+                    "Node %s is marked as KeepAlive=true. Please exclude this.", node,
+                )
+
             if node.required:
                 error(
                     "Node %s is unmatched but is flagged as required."
@@ -89,13 +108,20 @@ def delete_nodes(
                 )
 
     ge_driver.handle_draining(nodes)
-    print("Drained {}".format(nodes))
+    print("Drained {}".format([str(n) for n in nodes]))
 
-    demand_calc.delete(nodes)
-    print("Deleting {}".format(nodes))
+    if do_delete:
+        demand_calc.delete(nodes)
+        print("Deleting {}".format(nodes))
 
     ge_driver.handle_post_delete(nodes)
-    print("Deleted {}".format(nodes))
+    print("Removed from cluster {}".format([str(n) for n in nodes]))
+
+
+def remove_nodes(
+    config: Dict, hostnames: List[str], node_names: List[str], force: bool = False
+) -> None:
+    delete_nodes(config, hostnames, node_names, force, do_delete=False)
 
 
 def _find_nodes(
@@ -181,309 +207,17 @@ def queues(config: Dict) -> None:
     )
 
 
-def _master_hostname(config: Dict) -> str:
-    master_hostname = config.get("gridengine", {}).get("master")
-    if not master_hostname:
-        master_hostname = socket.gethostname().split(".")[0]
-    return master_hostname
+def validate_func(config: Dict) -> None:
+    ge_env = environment.from_qconf(config)
+    queue: parallel_environments.GridEngineQueue
+    failure = False
+    failure = validate.validate_nodes(config, warn) or failure
+    for qname, queue in ge_env.queues.items():
+        failure = validate.validate_ht_hostgroup(queue, warn) or failure
+        failure = validate.validate_pe_hostgroups(queue, warn) or failure
 
-
-def create_queues(config: Dict) -> None:
-    """Creates GE queues based on Configuration.gridengine.queues"""
-    check_call(
-        [
-            QCONF_PATH,
-            "-mattr",
-            "queue",
-            "slots",
-            "0",
-            "{}@{}".format("all.q", _master_hostname(config)),
-        ]
-    )
-
-    template = check_output([QCONF_PATH, "-sq", "all.q"]).decode().splitlines()
-    template = parallel_environments._flatten_lines(template)
-
-    existing_queues = check_output([QCONF_PATH, "-sql"]).decode().split()
-    existing_hostgroups = check_output([QCONF_PATH, "-shgrpl"]).decode().split()
-    existing_pes = check_output([QCONF_PATH, "-spl"]).decode().split()
-
-    hostgroup_to_pes_by_q = _hostgroup_to_pes(config, existing_pes)
-    queues = config.get("gridengine", {}).get("queues", {})
-
-    for queue_name, queue_config in queues.items():
-        hostlist = queues.get("hostlist", ["@" + queue_name])
-
-        if hostlist is None or isinstance(hostlist, str):
-            hostlist = [hostlist]
-
-        if not hostlist or hostlist == [None]:
-            hostlist = ["NONE"]
-
-        create_queue(
-            config,
-            template,
-            queue_name,
-            hostlist,
-            hostgroup_to_pes_by_q[queue_name],
-            existing_queues,
-            existing_hostgroups,
-        )
-
-
-def _hostgroup_to_pes(
-    config: Dict, existing_pes: List[str]
-) -> Dict[str, Dict[str, List[str]]]:
-    default_pes = {}
-    for pe_name in existing_pes:
-        default_pes[pe_name] = {"hostgroups": [None]}
-
-    hostgroup_to_pes: Dict[str, Dict[str, List[str]]] = {}
-
-    queues = config.get("gridengine", {}).get("queues", {})
-
-    for queue_name, queue_config in queues.items():
-        hostgroup_to_pes[queue_name] = {}
-        pes: Dict[str, Dict] = queue_config.get("pes", default_pes)
-
-        for pe_name, pe in pes.items():
-            hostgroups = pe.get("hostgroups", [])
-            if isinstance(hostgroups, str):
-                hostgroups = [hostgroups]
-
-            if not hostgroups:
-                hostgroups = [None]
-
-            for hg in hostgroups:
-                if hg not in hostgroup_to_pes[queue_name]:
-                    hostgroup_to_pes[queue_name][hg] = []
-                hostgroup_to_pes[queue_name][hg].append(pe_name)
-
-    return hostgroup_to_pes
-
-
-def create_queue(
-    config: Dict,
-    template: List[str],
-    queue_name: str,
-    hostlist: List[str],
-    hostgroup_to_pes: Dict[str, List[str]],
-    existing_queues: List[str],
-    existing_hostgroups: List[str],
-) -> None:
-    """
-    $ qconf -sq parallel
-    ...
-    seq_no    2,[@quadcore=3],[@hexcore-eth=4],...
-    ...
-    pe_list   NONE,[@quadcore=make mpi-8 smp],[@hexcore=make mpi-12 smp],...
-    ...
-    slots     0,[@quadcore=8],[@hexcore=12],...
-    ...
-    """
-    all_hostgroups = []
-    for expr in hostlist:
-        if expr and expr.startswith("@"):
-            all_hostgroups.append(expr)
-    all_hostgroups.extend(hostgroup_to_pes.keys())
-
-    master_hostname = _master_hostname(config)
-
-    for hostgroup in all_hostgroups:
-        if hostgroup is None:
-            continue
-
-        if hostgroup in existing_hostgroups:
-            print("Hostgroup {} already exists".format(hostgroup))
-        else:
-            _create_hostgroup(master_hostname, queue_name, hostgroup)
-            existing_hostgroups.append(hostgroup)
-
-    exists = queue_name in existing_queues
-    if exists:
-        print("Queue {} already exists".format(queue_name))
-
-    _create_queue(
-        template, master_hostname, queue_name, hostlist, hostgroup_to_pes, exists
-    )
-
-
-def _create_queue(
-    template: List[str],
-    master_hostname: str,
-    queue_name: str,
-    hostlist: List[str],
-    hostgroup_to_pes: Dict[str, List[str]],
-    exists: bool,
-) -> None:
-    fd, path = tempfile.mkstemp()
-    try:
-        with os.fdopen(fd, "w") as fw:
-            _create_queue_file(fw, template, queue_name, hostlist, hostgroup_to_pes)
-    finally:
-        pass
-        # try:
-        #     os.remove(path)
-        # except Exception:
-        #     pass
-    check_call([QCONF_PATH, "-Mq" if exists else "-Aq", path])
-
-    check_call(
-        [
-            QCONF_PATH,
-            "-mattr",
-            "queue",
-            "slots",
-            "0",
-            "{}@{}".format(queue_name, master_hostname),
-        ]
-    )
-
-
-def _create_queue_file(
-    fw: TextIOWrapper,
-    template: List[str],
-    queue_name: str,
-    hostlist: List[str],
-    hostgroup_to_pes: Dict[str, List[str]],
-) -> None:
-
-    template = parallel_environments._flatten_lines(template)
-
-    print("Creating queue {}".format(queue_name))
-    full_hostlist = hostlist + []
-    for hostgroup in hostgroup_to_pes:
-        # make sure that we also include the relevant pg hostgroups
-        if hostgroup not in full_hostlist:
-            full_hostlist.append(hostgroup)
-
-    if len(full_hostlist) > 1:
-        # NONE doesn't make sense if there actually is a hostgroup.
-        full_hostlist = [x for x in full_hostlist if x not in [None, "NONE"]]
-    else:
-        full_hostlist = ["NONE" for x in full_hostlist if x is None]
-
-    for line in template:
-        if line.startswith("qname"):
-            fw.write("qname                 ")
-            fw.write(queue_name)
-
-        elif line.startswith("hostlist"):
-            fw.write("hostlist              ")
-            fw.write(" ".join(full_hostlist))
-
-        elif line.startswith("pe_list"):
-            fw.write("pe_list               NONE")
-            for hostgroup, pes in hostgroup_to_pes.items():
-                pe_expr = " ".join(pes)
-                if hostgroup is None:
-                    for hostslist_item in hostlist:
-                        fw.write(",[{}={}]".format(hostslist_item, pe_expr))
-                else:
-                    fw.write(",[{}={}]".format(hostgroup, pe_expr))
-        elif line.startswith("slots"):
-            fw.write("slots               0")
-        else:
-            fw.write(line)
-
-        fw.write("\n")
-
-
-def _create_hostgroup(master_hostname: str, queue_name: str, hostgroup: str) -> None:
-    print("Creating hostgroup {}".format(hostgroup))
-
-    fd, path = tempfile.mkstemp()
-    try:
-        with os.fdopen(fd, "w") as fw:
-            fw.write("group_name {}\n".format(hostgroup))
-            fw.write("hostlist NONE")
-
-        check_call([QCONF_PATH, "-Ahgrp", path])
-        hostname = socket.gethostname().split(".")[0]
-
-        check_call([QCONF_PATH, "-aattr", "hostgroup", "hostlist", hostname, hostgroup])
-
-    finally:
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-
-def amend_queue_config(config: Dict, writer: TextIO = sys.stdout) -> None:
-    """
-    Used during initialization to create the default autoscale queue config.
-    """
-
-    # """
-    # ...
-    # "gridengine": {
-    # "queues": {
-    #   "hpc.q": {
-    #     "constraints": [{"node.nodearray": "hpc"}],
-    #     "hostlist": "NONE",
-    #     "pes": {
-    #       "make": {"hostgroups": ["@hpc.q_make"]},
-    #       "mpi": {"hostgroups": ["@hpc.q_mpi"]},
-    #       "mpislots": {"hostgroups": ["@hpc.q_mpislots"]},
-    #       "smpslots": {"hostgroups": []}}},
-    #   "htc.q": {
-    #     "constraints": [{"node.nodearray": "htc"}],
-    #     "hostlist": "@htc.q",
-    #     "pes": {
-    #       "smpslots": { "hostgroups": [] },
-    #       "make": { "hostgroups": [] }
-    #     }}}}}
-    # """
-
-    node_mgr = new_node_manager(config)
-    new_config = deepcopy(config)
-    new_config["gridengine"] = ge_config = new_config.get("gridengine", {})
-    ge_config["queues"] = queues = ge_config.get("queues", {})
-    assert isinstance(
-        queues, dict
-    ), "Invalid config. gridengine.queues must be a dictionary."
-
-    by_nodearray = partition(node_mgr.get_buckets(), lambda b: b.nodearray)
-    ge_env = environment.from_qconf(new_config)
-
-    for nodearray, buckets in by_nodearray.items():
-        bucket = buckets[0]
-        nodearray_ge_config = bucket.software_configuration.get("gridengine", {})
-        qname = nodearray_ge_config.get("qname", "{}.q".format(nodearray))
-        queues[qname] = queue = queues.get(nodearray, {})
-        colocated = str(nodearray_ge_config.get("colocated", False)).lower() == "true"
-        pes = nodearray_ge_config.get("pes", " ".join(ge_env.pes.keys())).split()
-        queue["constraints"] = [{"node.nodearray": nodearray}]
-        if colocated:
-            queue["hostlist"] = "NONE"
-        else:
-            queue["hostlist"] = "@{}".format(qname)
-
-        for pe_name in pes:
-            if pe_name not in ge_env.pes:
-                raise RuntimeError(
-                    "Unknown parallel_environment {}: Expected one of {}".format(
-                        pe_name, " ".join(ge_env.pes.keys())
-                    )
-                )
-
-            if "pes" not in queue:
-                queue["pes"] = {}
-
-            queue["pes"][pe_name] = {"hostgroups": []}
-
-            if not colocated:
-                queue["pes"][pe_name]["hostgroups"].append(None)
-                continue
-
-            pe = ge_env.pes[pe_name]
-            if pe.requires_placement_groups:
-                queue["pes"][pe_name]["hostgroups"].append(
-                    "@{}_{}".format(qname, pe_name)
-                )
-
-    json.dump(new_config, writer, indent=2)
+    if failure:
+        sys.exit(1)
 
 
 def demand(
@@ -623,7 +357,7 @@ def resources(config: Dict, constraint_expr: str) -> None:
     config["output_columns"]
 
 
-def initconfig(**config: Dict) -> None:
+def initconfig(writer: TextIO = sys.stdout, **config: Dict) -> None:
     #     autoscale_config = {
     #   :cluster_name => node[:cyclecloud][:cluster][:name],
     #   :username => node[:cyclecloud][:config][:username],
@@ -646,8 +380,7 @@ def initconfig(**config: Dict) -> None:
             if parent not in config:
                 config[parent] = {}
             config[parent][child] = config.pop(key)
-
-    amend_queue_config(config, sys.stdout)
+    json.dump(config, writer, indent=2)
 
 
 def _parse_contraint(constraint_expr: str) -> List[NodeConstraint]:
@@ -727,6 +460,28 @@ class ReraiseAssertionInterpreter(code.InteractiveConsole):
         return code.InteractiveConsole.showtraceback(self)
 
 
+def analyze(config: Dict, job_id: str) -> None:
+
+    ctx = DefaultContextHandler("[demand-cli]")
+
+    register_result_handler(ctx)
+    ge_env = environment.from_qconf(config)
+    ge_driver = autoscaler.new_driver(config, ge_env)
+    config = ge_driver.preprocess_config(config)
+    autoscaler.calculate_demand(config, ge_env, ge_driver, ctx)
+
+    key = "[job {}]".format(job_id)
+    results = ctx.by_context[key]
+    for result in results:
+        if isinstance(result, MatchResult) and result:
+            continue
+        QueueAndHostgroupConstraint
+        if isinstance(result, QueueAndHostgroupConstraint) and not result:
+            continue
+        print(result.message)
+    # autoscaler.print_demand(config, demand_result, output_columns, output_format)
+
+
 def shell(config: Dict) -> None:
     """
         Provides read only interactive shell. type gehelp()
@@ -780,10 +535,17 @@ def shell(config: Dict) -> None:
         interpreter.push("")
         interpreter.push("readline.set_completer(_complete_helper)")
         for item in interpreter.history_lines:
-            if '"""' in item:
-                interpreter.push("readline.add_history('''%s''')" % item.rstrip("\n"))
-            else:
-                interpreter.push('readline.add_history("""%s""")' % item.rstrip("\n"))
+            try:
+                if '"""' in item:
+                    interpreter.push(
+                        "readline.add_history('''%s''')" % item.rstrip("\n")
+                    )
+                else:
+                    interpreter.push(
+                        'readline.add_history("""%s""")' % item.rstrip("\n")
+                    )
+            except Exception:
+                pass
         interpreter.push("from hpc.autoscale.job.job import Job\n")
         interpreter.push("from hpc.autoscale import hpclogging as logging\n")
 
@@ -880,6 +642,11 @@ def main(argv: Iterable[str] = None) -> None:
     delete_parser.add_argument("-N", "--node-names", type=str_list, default=[])
     delete_parser.add_argument("--force", action="store_true", default=False)
 
+    remove_parser = add_parser("remove_nodes", remove_nodes, read_only=False)
+    remove_parser.add_argument("-H", "--hostnames", type=str_list, default=[])
+    remove_parser.add_argument("-N", "--node-names", type=str_list, default=[])
+    remove_parser.add_argument("--force", action="store_true", default=False)
+
     add_parser_with_columns("demand", demand).add_argument(
         "--jobs", "-j", default=None, required=False
     )
@@ -936,10 +703,11 @@ def main(argv: Iterable[str] = None) -> None:
     add_parser("scheduler_nodes", scheduler_nodes)
 
     help_msg.write("\nadvanced usage:")
-    add_parser("amend_queue_config", amend_queue_config, read_only=False)
-    add_parser("create_queues", create_queues, read_only=False)
+    add_parser("validate", validate_func, read_only=True)
     add_parser("queues", queues, read_only=True)
     add_parser("shell", shell)
+    analyze_parser = add_parser("analyze", analyze)
+    analyze_parser.add_argument("--job-id", "-j")
 
     parser.usage = help_msg.getvalue()
     args = parser.parse_args()
@@ -959,11 +727,10 @@ def main(argv: Iterable[str] = None) -> None:
     try:
         args.func(**kwargs)
     except Exception as e:
-        logging.exception(str(e))
-        print(str(e))
-        import traceback
-
-        traceback.print_exc()
+        print(str(e), file=sys.stderr)
+        if hasattr(e, "message"):
+            print(getattr(e, "message"), file=sys.stderr)
+        logging.debug("Full stacktrace", exc_info=sys.exc_info())
         sys.exit(1)
 
 

@@ -386,7 +386,7 @@ jetpack_send "Registering QMaster for monitoring." do
 end
 
 
-relevant_complexes = node[:gridengine][:relevant_complexes] || ["slots", "slot_type"]
+relevant_complexes = node[:gridengine][:relevant_complexes] || ["slots", "slot_type", "nodearray", "m_mem_free", "exclusive"]
 relevant_complexes_str = relevant_complexes.join(",")
 
 cookbook_file "/opt/cycle/gridengine/logging.conf" do
@@ -395,5 +395,42 @@ cookbook_file "/opt/cycle/gridengine/logging.conf" do
   group 'root'
   mode '0644'
   action :create
-  not_if {::File.exists?("#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf")}
+  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf")}
+end
+
+
+bash 'setup cyclecloud-gridengine' do
+  code <<-EOH
+  set -e
+  . /etc/cluster-setup.sh
+  jetpack download #{node[:gridengine][:installer]} --project gridengine #{node[:cyclecloud][:bootstrap]}/
+
+  cd #{node[:cyclecloud][:bootstrap]}/
+  
+  tar xzf #{node[:gridengine][:installer]}
+  cd cyclecloud-gridengine/
+  
+  INSTALLDIR=/opt/cycle/gridengine
+  mkdir -p $INSTALLDIR/venv
+  
+  ./install.sh --install-python3 --venv $INSTALLDIR/venv
+  
+  azge initconfig --cluster-name #{node[:cyclecloud][:cluster][:name]} \
+                  --username     #{node[:cyclecloud][:config][:username]} \
+                  --password     #{node[:cyclecloud][:config][:password]} \
+                  --url          #{node[:cyclecloud][:config][:web_server]} \
+                  --lock-file    $INSTALLDIR/scalelib.lock \
+                  --log-config   $INSTALLDIR/logging.conf \
+                  --default-resource '{"select": {}, "name": "slots", "value": "node.vcpu_count"}' \
+                  --default-resource '{"select": {}, "name": "slot_type", "value": "node.nodearray"}' \
+                  --default-resource '{"select": {}, "name": "nodearray", "value": "node.nodearray"}' \
+                  --default-resource '{"select": {}, "name": "m_mem_free", "value": "node.resources.memb"}' \
+                  --default-resource '{"select": {}, "name": "mfree", "value": "node.resources.memb"}' \
+                  --idle-timeout #{node[:gridengine][:idle_timeout]} \
+                  --relevant-complexes #{relevant_complexes_str} > $INSTALLDIR/autoscale.json
+
+  touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
+  EOH
+  action :run
+  not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed")}
 end

@@ -81,7 +81,7 @@ crontab -l > /tmp/current_crontab
 grep -q 'Created by cyclecloud-gridengine install.sh' /tmp/current_crontab
 if [ $? != 0 ]; then
     echo \# Created by cyclecloud-gridengine install.sh >> /tmp/current_crontab
-    echo '* * * * * /usr/local/bin/azge autoscale -c /opt/cycle/gridengine/autoscale.json' >> /tmp/current_crontab
+    echo '* * * * * . /etc/profile.d/sgesettings.sh && /usr/local/bin/azge autoscale -c /opt/cycle/gridengine/autoscale.json' >> /tmp/current_crontab
     crontab /tmp/current_crontab
 fi
 rm -f /tmp/current_crontab

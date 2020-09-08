@@ -1,9 +1,9 @@
 import configparser
 import os
 import tarfile
-from typing import Optional
 import tempfile
 from subprocess import check_call
+from typing import Optional
 
 
 def execute() -> None:

@@ -1,5 +1,8 @@
+import json
 import math
+import os
 import socket
+import tempfile
 from subprocess import STDOUT, CalledProcessError
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from xml.etree import ElementTree
@@ -124,62 +127,36 @@ class GridEngineDriver:
 
         hostnames_to_delete: Set[str] = set()
 
-        for queue_name, nodes in by_queue.items():
+        for node in nodes_to_delete:
+            if not node.hostname:
+                continue
 
-            for node in nodes:
-                if not node.hostname:
-                    continue
+            hostname = node.hostname.lower()
 
-                hostname = node.hostname.lower()
+            try:
+                logging.info("Removing host %s via qconf -dh, -de and -ds", hostname)
+                # we need to remove these from the hostgroups first, otherwise
+                # we can't remove the node
+                for hostlist_name, hosts in by_hostlist.items():
+                    if hostname in hosts:
+                        call(
+                            [
+                                QCONF_PATH,
+                                "-dattr",
+                                "hostgroup",
+                                "hostlist",
+                                node.hostname,
+                                hostlist_name,
+                            ]
+                        )
 
-                try:
-                    logging.info(
-                        "Removing host %s via qconf -dh, -de and -ds", hostname
-                    )
-                    # we need to remove these from the hostgroups first, otherwise
-                    # we can't remove the node
-                    for hostlist_name, hosts in by_hostlist.items():
-                        if hostname in hosts:
-                            call(
-                                [
-                                    QCONF_PATH,
-                                    "-dattr",
-                                    "hostgroup",
-                                    "hostlist",
-                                    node.hostname,
-                                    hostlist_name,
-                                ]
-                            )
-                    if queue_name not in self.ge_env.queues:
-                        if queue_name != "unknown.q":
-                            logging.error(
-                                "Queue %s does not exist? Ignoring node %s",
-                                queue_name,
-                                node,
-                            )
-                        logging.info("Queue is unknown.q for %s.", node.hostname)
-                    else:
-                        queue_config = self.ge_env.queues[queue_name]
+                for qname in self.ge_env.queues:
+                    self._delete_host_from_slots(qname, hostname)
 
-                        if hostname in queue_config.slots:
-                            queue_host = "{}@{}".format(queue_name, hostname)
-                            slots = queue_config.slots[hostname]
+                hostnames_to_delete.add(hostname)
 
-                            call(
-                                [
-                                    QCONF_PATH,
-                                    "-dattr",
-                                    "queue",
-                                    "slots",
-                                    str(slots),
-                                    queue_host,
-                                ]
-                            )
-
-                    hostnames_to_delete.add(hostname)
-
-                except CalledProcessError as e:
-                    logging.warning(str(e))
+            except CalledProcessError as e:
+                logging.warning(str(e))
 
         # now that we have removed all slots entries from all queues, we can
         # delete the hosts. If you don't do this, it will complain that the hosts
@@ -194,12 +171,12 @@ class GridEngineDriver:
 
                 if host_to_delete in exec_hosts:
                     call([QCONF_PATH, "-de", host_to_delete])
-                else:
-                    logging.warning("%s not in %s", host_to_delete, exec_hosts)
+
         except CalledProcessError as e:
             logging.warning(str(e))
 
     def handle_undraining(self, matched_nodes: List[Node]) -> List[Node]:
+        assert False
         if self.read_only:
             return []
 
@@ -218,6 +195,34 @@ class GridEngineDriver:
                         "Could not undrain %s: %s.", node, str(e),
                     )
         return undrained
+
+    def _delete_host_from_slots(self, qname: str, hostname: str) -> None:
+        queue_host = "{}@{}".format(qname, hostname)
+
+        hostname = hostname.lower()
+
+        queue = self.ge_env.queues.get(qname)
+        if not queue:
+            logging.warning(
+                "Queue %s does not exist. Attempted to remove %s from the slots declaration",
+                qname,
+                hostname,
+            )
+            return
+
+        if hostname not in queue.slots:
+            # already removed
+            return
+
+        logging.info(
+            "Purging slots definition for host=%s queue=%s", hostname, queue.qname
+        )
+
+        check_call(
+            [QCONF_PATH, "-purge", "queue", "slots", queue_host,]  # noqa: ignore=E231
+        )
+
+        queue.slots.pop(hostname)
 
     def _get_hostlist(self, hostgroup: str) -> List[str]:
         if hostgroup not in self._hostgroup_cache:
@@ -275,7 +280,10 @@ class GridEngineDriver:
         if self.read_only:
             return []
 
-        logging.getLogger("gridengine.driver").info("add_nodes_to_cluster")
+        hostnames = ",".join([n.hostname or "tbd" for n in nodes])
+        logging.getLogger("gridengine.driver").info(
+            "add_nodes_to_cluster %s", hostnames
+        )
 
         if not nodes:
             return []
@@ -298,8 +306,51 @@ class GridEngineDriver:
         # this is the very last thing we do, so this is basically 'committing'
         # the node.
 
-        if node.hostname in submit_hostnames:
+        if not self._validate_add_node_to_cluster(node, submit_hostnames):
+            logging.fine(
+                "Validation of %s did not succeed. Not adding to cluster.", node
+            )
             return False
+
+        hostgroups_expr = self._get_hostgroups_expr(node)
+        if not hostgroups_expr:
+            logging.fine(
+                "No hostgroups_expr was found for %s. Can not add to cluster.", node
+            )
+            return False
+
+        if not self._validate_reverse_dns(node):
+            logging.fine(
+                "%s still has a hostname that can not be looked via reverse dns", node
+            )
+            return False
+
+        try:
+
+            self.add_exec_host(node)
+            if not self._add_slots(node):
+                logging.fine("Adding slots to queues failed for node %s", node)
+                return False
+            self._add_to_hostgroups(node, hostgroups_expr)
+            # finally enable it
+            check_call([QMOD_PATH, "-e", "*@" + node.hostname])
+
+        except CalledProcessError as e:
+            logging.warn("Could not add %s to cluster: %s", node, str(e))
+            try:
+                check_output([QMOD_PATH, "-d", "*@" + node.hostname], stderr=STDOUT)
+            except CalledProcessError as e2:
+                logging.exception(e2.stdout)
+            return False
+
+        return True
+
+    def _validate_add_node_to_cluster(
+        self, node: Node, submit_hostnames: List[str]
+    ) -> bool:
+        if node.hostname in submit_hostnames:
+            if "d" not in node.metadata.get("state", ""):
+                return False
 
         if node.state == "Failed":
             logging.warning("Ignoring failed node %s", node)
@@ -314,7 +365,21 @@ class GridEngineDriver:
                 "%s does not have a hostname yet, can not add to cluster.", node
             )
             return False
+        return True
 
+    def _get_hostgroups_expr(self, node: Node) -> Optional[str]:
+        hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
+
+        if not hostgroups_expr:
+            logging.warning(
+                "No hostgroups found for node %s - %s",
+                node,
+                node.software_configuration,
+            )
+            return None
+        return hostgroups_expr
+
+    def _validate_reverse_dns(self, node: Node) -> bool:
         # let's make sure the hostname is valid and reverse
         # dns compatible before adding to GE
         try:
@@ -354,112 +419,144 @@ class GridEngineDriver:
                 addr_info_hostname,
             )
             return False
+        return True
 
-        try:
-            if node.hostname not in admin_hostnames:
-                logging.debug("Adding %s as administrative host", node)
-                check_call([QCONF_PATH, "-ah", node.hostname])
+    def get_host_template(self, node: Node) -> str:
+        ge_config = self.autoscale_config.get("gridengine", {})
+        script_path = ge_config.get("get_host_template")
+        if not script_path:
+            return self._default_get_host_template(node)
 
-            if node.hostname not in submit_hostnames:
-                logging.debug("Adding %s as submit host", node)
+        if not os.path.exists(script_path):
+            logging.warning("%s does not exist! Using default host template behavior")
+            return self._default_get_host_template(node)
 
-                ge_qname = node.software_configuration.get("gridengine_qname", "")
-                if not ge_qname:
-                    logging.warning(
-                        "gridengine_qname is not set on %s. Ignoring.", node
-                    )
-                    return False
+        return check_output([script_path], input=json.dumps(node.to_dict()))
 
-                for qname in ["all.q", ge_qname]:
-                    check_call(
-                        [
-                            QCONF_PATH,
-                            "-mattr",
-                            "queue",
-                            "slots",
-                            str(node.resources["slots"]),
-                            "{}@{}".format(qname, node.hostname),
-                        ]
-                    )
+    def _default_get_host_template(self, node: Node) -> str:
+        complex_values: List[str] = []
 
-                for res_name, res_value in node.resources.items():
-                    if res_name not in self.ge_env.complexes:
-                        logging.fine("Ignoring unknown complex %s", res_name)
-                        continue
+        for res_name, res_value in node.resources.items():
+            if isinstance(res_value, bool):
+                res_value = str(res_value).lower()
 
-                    if not res_value:
-                        logging.warning("Ignoring blank complex %s for %s", res_name, node)
-                    complex = self.ge_env.complexes[res_name]
-                    if (
-                        complex.name != complex.shortcut
-                        and res_name == complex.shortcut
-                    ):
-                        # this is just a duplicate of the long form
-                        continue
+            if isinstance(res_value, str) and res_value.lower() in ["true", "false"]:
+                if res_value.lower() == "true":
+                    res_value = 1
+                else:
+                    res_value = 0
 
-                    if complex.name == "slots":
-                        # this is handled by ge in a special way
-                        continue
+            if res_name not in self.ge_env.complexes:
+                logging.fine("Ignoring unknown complex %s", res_name)
+                continue
 
-                    check_call(
-                        [
-                            QCONF_PATH,
-                            "-mattr",
-                            "exechost",
-                            "complex_values",
-                            "{}={}".format(res_name, res_value),
-                            node.hostname,
-                        ]
-                    )
+            if not res_value:
+                logging.warning("Ignoring blank complex %s for %s", res_name, node)
 
-                hostgroups_expr = node.software_configuration.get(
-                    "gridengine_hostgroups"
-                )
-            if not hostgroups_expr:
-                logging.warning(
-                    "No hostgroups found for node %s - %s",
-                    node,
-                    node.software_configuration,
-                )
-                return False
+            complex = self.ge_env.complexes[res_name]
+            if complex.name != complex.shortcut and res_name == complex.shortcut:
+                # this is just a duplicate of the long form
+                continue
 
-            # TODO assert these are @hostgroups
-            hostgroups = hostgroups_expr.split(" ")
+            # if complex.name in ["slots", "m_mem_free"]:
+            #     # slots are handled by ge in a special way
+            #     # m_mem_free is handled by the execute.rb
+            #     continue
+            complex_values.append("{}={}".format(res_name, res_value))
 
-            for hostgroup in hostgroups:
-                if not node.hostname:
-                    continue
+        complex_values_csv = ",".join(complex_values)
+        return """hostname              {hostname}
+load_scaling          NONE
+complex_values        {complex_values_csv}
+user_lists            NONE
+xuser_lists           NONE
+projects              NONE
+xprojects             NONE
+usage_scaling         NONE
+report_variables      NONE""".format(
+            hostname=node.hostname, complex_values_csv=complex_values_csv
+        )
 
-                if not hostgroup.startswith("@"):
-                    # hostgroups have to start with @
-                    continue
-
-                hostlist_for_hg = self._get_hostlist(hostgroup)
-                if node.hostname.lower() in hostlist_for_hg:
-                    continue
-
-                logging.info(
-                    "Adding hostname %s to hostgroup %s", node.hostname, hostgroup
-                )
-
-                check_call(
-                    [
-                        QCONF_PATH,
-                        "-aattr",
-                        "hostgroup",
-                        "hostlist",
-                        node.hostname,
-                        hostgroup,
-                    ]
-                )
-
-                check_call([QCONF_PATH, "-as", node.hostname])
-
-        except CalledProcessError as e:
-            logging.warn("Could not add %s to cluster: %s", node, str(e))
+    def _add_slots(self, node: Node) -> bool:
+        ge_qname = node.software_configuration.get("gridengine_qname", "")
+        if not ge_qname:
+            logging.warning(
+                "gridengine_qname is not set on %s so it can not join the cluster. Ignoring",
+                node,
+            )
             return False
 
+        for qname in ["all.q", ge_qname]:
+            logging.debug("Adding slots for %s to queue %s", node.hostname, qname)
+            check_call(
+                [
+                    QCONF_PATH,
+                    "-mattr",
+                    "queue",
+                    "slots",
+                    str(node.resources["slots"]),
+                    "{}@{}".format(qname, node.hostname),
+                ]
+            )
         return True
+
+    def add_exec_host(self, node: Node) -> None:
+        tempp = tempfile.mktemp()
+        try:
+            host_template = self.get_host_template(node)
+            logging.getLogger("gridengine.driver").info(
+                "host template contents written to %s", tempp
+            )
+            logging.getLogger("gridengine.driver").info(host_template)
+
+            with open(tempp, "w") as tempf:
+                tempf.write(host_template)
+            try:
+                check_output([QCONF_PATH, "-Ae", tempp], stderr=STDOUT)
+            except CalledProcessError as e:
+                if "already exists" in e.stdout.decode():
+                    check_call([QCONF_PATH, "-Me", tempp])
+                else:
+                    raise
+        except Exception:
+            if os.path.exists(tempp):
+                try:
+                    os.remove(tempp)
+                except Exception:
+                    pass
+            raise
+
+        check_call([QCONF_PATH, "-as", node.hostname])
+        check_call([QCONF_PATH, "-ah", node.hostname])
+
+    def _add_to_hostgroups(self, node: Node, hostgroups_expr: str) -> None:
+        # TODO assert these are @hostgroups
+        hostgroups = hostgroups_expr.split(" ")
+
+        for hostgroup in hostgroups:
+            if not node.hostname:
+                continue
+
+            if not hostgroup.startswith("@"):
+                # hostgroups have to start with @
+                continue
+
+            hostlist_for_hg = self._get_hostlist(hostgroup)
+            if node.hostname.lower() in hostlist_for_hg:
+                continue
+
+            logging.info("Adding hostname %s to hostgroup %s", node.hostname, hostgroup)
+
+            check_call(
+                [
+                    QCONF_PATH,
+                    "-aattr",
+                    "hostgroup",
+                    "hostlist",
+                    node.hostname,
+                    hostgroup,
+                ]
+            )
 
     def clean_hosts(self, invalid_nodes: List[SchedulerNode]) -> None:
         logging.getLogger("gridengine.driver").info("clean_hosts")
@@ -507,9 +604,10 @@ class GridEngineDriver:
         for gqueue in self.ge_env.queues.values():
             for pe in gqueue.get_pes():
                 if pe:
-                    pg_name = pe.get_placement_group(gqueue.qname)
-                    if pg_name:
-                        default_pgs.append(pg_name)
+                    pe_pg_name = gqueue.get_placement_group(pe.name)
+                    if pe_pg_name:
+                        default_pgs.append(pe_pg_name)
+
         return config
 
     def preprocess_buckets(self, node_mgr: NodeManager) -> NodeManager:
@@ -624,6 +722,7 @@ def _get_jobs_and_nodes(
     # -s  pr -- show only pending or running
     # -f -- full output. Ambiguous what this means, but in this case it includes host information so that
     # we can get one consistent view (i.e. not split between two calls, introducing a race condition)
+    # qstat -xml -s pr -r -f -F
     cmd = [QSTAT_PATH, "-xml", "-s", "pr", "-r", "-f", "-F"]
     relevant_complexes = (
         autoscale_config.get("gridengine", {}).get("relevant_complexes") or []
@@ -653,7 +752,7 @@ def _parse_scheduler_nodes(
     compute_nodes: Dict[str, SchedulerNode] = {}
 
     elems = list(root.findall("queue_info/Queue-List"))
-    log_warnings = set()
+    log_warnings: Set[str] = set()
 
     def keyfunc(e: Element) -> str:
         try:
@@ -791,7 +890,7 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
     if not requested_queues:
         requested_queues = ["all.q"]
 
-    log_warnings = set()
+    log_warnings: Set[str] = set()
 
     job_id = _getr(jijle, "JB_job_number")
     slots = int(_getr(jijle, "slots"))
@@ -820,7 +919,6 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
         num_tasks = _parse_tasks(tasks_expr)
 
     constraints: List[Dict] = [{"slots": slots}] + ge_queue.constraints
-    alias_constraints: List[Dict] = []
 
     job_resources: Dict[str, str] = {}
 
@@ -845,24 +943,26 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
         else:
             req_value = complex.parse(req.text)
 
-        if complex and complex.shortcut != complex.name and complex.relop != "EXCL":
-            # create an alias for the shortcut
-            if resource_name == complex.shortcut:
-                resource_name = complex.shortcut
-            alias_constraints.append(ReadOnlyAlias(complex.shortcut, complex.name))
-            # else:
-            #     alias_constraints.append(ReadOnlyAlias(complex.name, complex.shortcut))
+        if complex:
+            if complex.shortcut != complex.name and complex.relop != "EXCL":
+                # always use the full name as the resource name. The shortcut
+                # will be included below
+                if resource_name == complex.shortcut:
+                    resource_name = complex.shortcut
 
-        if complex and complex.name == "slots":
-            # ensure we don't double count slots if someone specifies it
-            constraints[0]["slots"] = req_value
+            if complex.name == "slots":
+                # ensure we don't double count slots if someone specifies it
+                constraints[0]["slots"] = req_value
+            else:
+                constraints.append({resource_name: req_value})
+                if complex.shortcut != complex.name:
+                    # add in the shortcut as well
+                    constraints.append({complex.shortcut: req_value})
         else:
             constraints.append({resource_name: req_value})
         job_resources[resource_name] = req_value
 
     jobs: List[Job]
-
-    constraints.extend(alias_constraints)
 
     pe_elem = jijle.find("requested_pe")
     if pe_elem is not None:
@@ -873,10 +973,12 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
         else:
             jobs = pe_jobs
     else:
+        hostgroups = ge_queue.get_hostgroups_for_ht()
+        if not hostgroups:
+            logging.error("No hostgroup for job %s", job_id)
+            return None
         constraints.append(
-            QueueAndHostgroupConstraint(
-                ge_queue.qname, list(ge_queue.hostlist_groups), None
-            )
+            QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, None)
         )
         jobs = [Job(job_id, constraints, iterations=num_tasks)]
 
@@ -929,7 +1031,7 @@ def _pe_job(
         pe_count = int(pe_elem.text)
 
         # optional - can  be None if this is an htc style bucket.
-        placement_group = pe.get_placement_group(ge_queue.qname)
+        placement_group = ge_queue.get_placement_group(pe.name)
 
         queue_and_hostgroup_constraints.append(
             QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, placement_group)
@@ -957,18 +1059,6 @@ def _pe_job(
         constraints[0]["slots"] = pe_count
         # this is not colocated, so we can skip the redirection
         return [Job(job_id, constraints, iterations=num_tasks)]
-
-    # elif pe.allocation_rule.name == "$round_robin":
-    #     constraints[0]["slots"] = 1
-
-    #     def job_constructor(job_id: str) -> Job:
-    #         return Job(
-    #             job_id,
-    #             constraints,
-    #             node_count=slots,
-    #             colocated=True,
-    #             packing_strategy="scatter",
-    #         )
 
     elif pe.allocation_rule.name in ["$round_robin", "$fill_up"]:
         constraints[0]["slots"] = 1
@@ -1001,6 +1091,10 @@ def _pe_job(
     return ret
 
 
+# hostlist              @short.q @fillup0 @fillup1 @fillup2 @roundrobin0 \
+#                       @roundrobin1 @roundrobin2 @fixed0 @fixed1 @fixed2
+
+
 class QueueAndHostgroupConstraint(BaseNodeConstraint):
     def __init__(
         self,
@@ -1008,6 +1102,7 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
         hostgroups: List[str],
         placement_group: Optional[ht.PlacementGroup],
     ) -> None:
+        # assert len(hostgroups) == 1, hostgroups  # RDH remove
         self.qname = qname
         assert self.qname
         self.hostgroups_set = set(hostgroups)
@@ -1025,7 +1120,7 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                     self,
                     node,
                     reasons=[
-                        "Node {} is in a different pg: {} != {}".format(
+                        "{} is in a different pg: {} != {}".format(
                             node, node.placement_group, self.placement_group
                         )
                     ],
@@ -1036,7 +1131,7 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 self,
                 node,
                 reasons=[
-                    "Node {} is in a pg but our job is not colocated: {}".format(
+                    "{} is in a pg but our job is not colocated: {}".format(
                         node, node.placement_group
                     )
                 ],
@@ -1054,7 +1149,7 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 self,
                 node,
                 reasons=[
-                    "Node {} is in a different queue: {} != {}".format(
+                    "{} is in a different queue: {} != {}".format(
                         node, node_qname, self.qname
                     )
                 ],
@@ -1085,6 +1180,7 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
     def do_decrement(self, node: Node) -> bool:
         node_qname = node.available.get("_gridengine_qname") or self.qname
         assert node_qname == self.qname
+
         node.available["_gridengine_qname"] = self.qname
 
         node_hostgroups = set(
@@ -1150,10 +1246,11 @@ class GENodeQueue(NodeQueue):
         return node.available.get("slots", node.available.get("ncpus", 0))
 
     def early_bailout(self, node: Node) -> EarlyBailoutResult:
-        prio = self.node_priority(node)
-        if prio > 0:
-            return EarlyBailoutResult("success")
-        return EarlyBailoutResult("NoSlots", node, ["No more slots/ncpus remaining"])
+        return EarlyBailoutResult("success")
+        # prio = self.node_priority(node)
+        # if prio > 0:
+        #     return EarlyBailoutResult("success")
+        # return EarlyBailoutResult("NoSlots", node, ["No more slots/ncpus remaining"])
 
 
 register_parser("queue-and-hostgroups", QueueAndHostgroupConstraint.from_dict)
