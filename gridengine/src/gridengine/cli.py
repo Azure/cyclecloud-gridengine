@@ -373,6 +373,11 @@ def initconfig(writer: TextIO = sys.stdout, **config: Dict) -> None:
     if "gridengine" not in config:
         config["gridengine"] = {}
 
+    for pe_name in config.pop("disable_pgs_for_pe", []):
+        config["gridengine"]["pes"] = pes = config["gridengine"].get("pes") or {}
+        pes[pe_name] = pe_config = pes.get(pe_name) or {}
+        pe_config["requires_placement_groups"] = False
+
     for key in list(config.keys()):
 
         if "__" in key:
@@ -688,6 +693,11 @@ def main(argv: Iterable[str] = None) -> None:
     initconfig_parser.add_argument(
         "--idle-timeout", default=300, type=int, dest="gridengine__idle_timeout"
     )
+    initconfig_parser.add_argument(
+        "--disable-pgs-for-pe", default=[], type=str, action="append",
+        help="Disable creation of placement groups for a parallel environment. " + 
+        "This can be invoked more than once.", dest="disable_pgs_for_pe"
+    )
 
     add_parser("jobs", jobs)
     add_parser("jobs_and_nodes", jobs_and_nodes)
@@ -707,7 +717,7 @@ def main(argv: Iterable[str] = None) -> None:
     add_parser("queues", queues, read_only=True)
     add_parser("shell", shell)
     analyze_parser = add_parser("analyze", analyze)
-    analyze_parser.add_argument("--job-id", "-j")
+    analyze_parser.add_argument("--job-id", "-j", required=True)
 
     parser.usage = help_msg.getvalue()
     args = parser.parse_args()

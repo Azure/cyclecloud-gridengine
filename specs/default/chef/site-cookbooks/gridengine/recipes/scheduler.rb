@@ -424,8 +424,9 @@ bash 'setup cyclecloud-gridengine' do
                   --default-resource '{"select": {}, "name": "slots", "value": "node.vcpu_count"}' \
                   --default-resource '{"select": {}, "name": "slot_type", "value": "node.nodearray"}' \
                   --default-resource '{"select": {}, "name": "nodearray", "value": "node.nodearray"}' \
-                  --default-resource '{"select": {}, "name": "m_mem_free", "value": "node.resources.memb"}' \
-                  --default-resource '{"select": {}, "name": "mfree", "value": "node.resources.memb"}' \
+                  --default-resource '{"select": {}, "name": "m_mem_free", "value": "node.resources.memgb", "subtract": "1g"}' \
+                  --default-resource '{"select": {}, "name": "mfree", "value": "node.resources.m_mem_free"}' \
+                  --disable-pgs-for-pe make \
                   --idle-timeout #{node[:gridengine][:idle_timeout]} \
                   --relevant-complexes #{relevant_complexes_str} > $INSTALLDIR/autoscale.json
 
