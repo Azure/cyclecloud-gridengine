@@ -43,12 +43,23 @@ def read_parallel_environments(
         return _PE_CACHE
 
     parallel_envs = {}
-
+    pe_config = autoscale_config.get("gridengine", {}).get("pes", {})
     pe_names = check_output([QCONF_PATH, "-spl"]).decode().splitlines()
+
     for pe_name in pe_names:
         pe_name = pe_name.strip()
         lines = check_output([QCONF_PATH, "-sp", pe_name]).decode().splitlines(False)
         pe = _parse_ge_config(lines)
+
+        req_key = "requires_placement_groups"
+
+        if req_key in pe_config.get(pe_name, {}):
+            logging.warning(
+                "Overriding placement group behavior for PE %s with %s",
+                pe_name,
+                pe_config[pe_name][req_key],
+            )
+            pe[req_key] = pe_config[pe_name][req_key]
 
         parallel_envs[pe_name] = ParallelEnvironment(pe)
 
@@ -232,36 +243,49 @@ class GridEngineQueue:
             hostname = fqdn.strip().lower().split(".")[0]
             self.__slots[ht.Hostname(hostname)] = slot
 
-        for tok in re.split(r"[ \t,]+", queue_config["pe_list"]):
+        for tok in queue_config["pe_list"].split(","):
 
             tok = tok.strip()
 
             if tok == "NONE":
                 continue
 
-            pe_name: str
+            pe_name_expr: str
             hostgroups: List[str]
 
-            if not tok.startswith("["):
-                pe_name = tok
-                hostgroups = [x for x in self.__hostlist if x.startswith("@")]
-            else:
-                tok = tok[1:-1].strip()
-                hostgroup, pe_name = tok.split("=", 1)
-                hostgroups = [hostgroup]
+            if "@" in tok and "=" in tok:
+                tok = tok.lstrip("[").rstrip("]")
+                hostgroup, pe_name_expr = tok.split("=", 1)
 
-            if pe_name not in ge_env.pes:
-                logging.warning(
-                    "Parallel environment %s was not found - %s. Skipping",
-                    pe_name,
-                    list(ge_env.pes.keys()),
-                )
-                continue
-            assert pe_name not in self.__pe_to_hostgroups
-            self.__pe_to_hostgroups[pe_name] = hostgroups
-            self.__parallel_environments[pe_name] = ge_env.pes[pe_name]
+                hostgroups = [hostgroup]
+            else:
+                pe_name_expr = tok
+                hostgroups = [x for x in self.__hostlist if x.startswith("@")]
+
+            pe_names = pe_name_expr.split()
+
+            for pe_name in pe_names:
+                if pe_name not in ge_env.pes:
+                    logging.warning(
+                        "Parallel environment %s was not found - %s. Skipping",
+                        pe_name,
+                        list(ge_env.pes.keys()),
+                    )
+                    continue
+                assert pe_name not in self.__pe_to_hostgroups
+                self.__pe_to_hostgroups[pe_name] = hostgroups
+                self.__parallel_environments[pe_name] = ge_env.pes[pe_name]
+
         if queue_config["pe_list"]:
             assert self.__parallel_environments, queue_config["pe_list"]
+
+        all_host_groups = set(self.hostlist)
+        for pe in self.__parallel_environments.values():
+            if pe.requires_placement_groups:
+                all_host_groups = all_host_groups - set(
+                    self.get_hostgroups_for_pe(pe.name)
+                )
+        self.__ht_hostgroups = list(all_host_groups)
 
     @property
     def qname(self) -> str:
@@ -318,6 +342,10 @@ class GridEngineQueue:
             )
         return [self.__parallel_environments[x] for x in self._pe_keys(pe_name)]
 
+    def get_hostgroups_for_ht(self) -> List[str]:
+        # TODO expensive
+        return self.__ht_hostgroups
+
     def get_hostgroups_for_pe(self, pe_name: str) -> List[str]:
         if not self.has_pe(pe_name):
             raise RuntimeError(
@@ -328,14 +356,22 @@ class GridEngineQueue:
 
         return self.__pe_to_hostgroups[pe_name]
 
-    def get_placement_groups(self) -> List[str]:
-        ret = []
-        for pe in self.__parallel_environments.values():
-            if pe.requires_placement_groups:
-                placement_group = ht.PlacementGroup("{}_{}".format(self.qname, pe.name))
-                placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
-                ret.append(placement_group)
-        return ret
+    def get_placement_group(self, pe_name: str) -> Optional[str]:
+        if pe_name not in self.__parallel_environments:
+            raise RuntimeError(
+                "Could not find pe {} - {}".format(
+                    pe_name, list(self.__parallel_environments.keys())
+                )
+            )
+        pe = self.__parallel_environments[pe_name]
+
+        if not pe.requires_placement_groups:
+            return None
+
+        first = self.get_hostgroups_for_pe(pe.name)[0]
+        placement_group = ht.PlacementGroup(first.replace("@", ""))
+        placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
+        return placement_group
 
     def __str__(self) -> str:
         return "GridEnineQueue(qname={}, pes={}, hostlist={})".format(
@@ -376,19 +412,17 @@ class ParallelEnvironment:
 
     @property
     def requires_placement_groups(self) -> bool:
+        override = self.config.get("requires_placement_groups")
+        if override is not None:
+            assert isinstance(
+                override, bool
+            ), "requires_placement_groups must a be a boolean"
+            return override
         return self.allocation_rule.requires_placement_groups
 
     @property
     def is_fixed(self) -> bool:
         return self.allocation_rule.is_fixed
-
-    def get_placement_group(self, qname: str) -> Optional[str]:
-        if self.requires_placement_groups:
-            placement_group = ht.PlacementGroup("{}_{}".format(qname, self.name))
-            placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
-            return placement_group
-
-        return None
 
     def __repr__(self) -> str:
         return "ParallelEnvironment(name=%s, slots=%s, alloc=%s, pg=%s)" % (
@@ -428,6 +462,10 @@ class AllocationRule(ABC):
             return FixedProcesses(allocation_rule)
         else:
             raise RuntimeError("Unknown allocation rule {}".format(allocation_rule))
+
+    def __repr__(self) -> str:
+        cname = self.__class__.__name__
+        return "{}({})".format(cname, self.name)
 
 
 class FillUp(AllocationRule):
@@ -538,7 +576,7 @@ class Complex:
                     mem = ht.Memory(float(value), "b")
                 else:
                     mem = ht.Memory(float(value[:-1]), size)
-                return mem.convert_to("m").value
+                return mem.convert_to("g")
             else:
                 if not self.__logged_type_warning:
                     logging.warning(
