@@ -26,10 +26,6 @@ if not __VALIDATED:
 __VALIDATED = True
 
 
-if not QCONF_PATH:
-    logging.error("Could not find qstat in PATH: {}".format(os.environ))
-
-
 DISABLED_RESOURCE_GROUP = "limitcycleclouddisabled"
 DISABLED_HOST_GROUP = "@cycleclouddisabled"
 
@@ -77,6 +73,11 @@ def call(cmd: List[str]) -> None:
 
 
 def check_output(cmd: List[str], *args: Any, **kwargs: Any) -> Any:
+    if not cmd or not cmd[0]:
+        raise RuntimeError(
+            "Could not run the following command {}. Please check your PATH".format(cmd)
+        )
+
     q_logger = logging.getLogger("gridengine.driver")
     shlexed = " ".join([shlex.quote(x) for x in cmd])
     logging.trace("Running '%s'", shlexed)
