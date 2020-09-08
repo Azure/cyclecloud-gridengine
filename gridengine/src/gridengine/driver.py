@@ -685,6 +685,11 @@ def _parse_scheduler_nodes(
             continue
 
         slots_total = int(_getr(qiqle, "slots_total"))
+
+        if slots_total == 0:
+            logging.debug("Ignoring nodes with 0 slots: %s", name)
+            continue
+
         resources: dict = {"slots": slots_total}
         if "slots" in ge_queue.complexes:
             resources[ge_queue.complexes["slots"].shortcut] = slots_total
@@ -771,8 +776,15 @@ def _parse_jobs(root: Element, ge_queues: Dict[str, GridEngineQueue]) -> List[Jo
     return autoscale_jobs
 
 
+IGNORE_STATES = set("hEe")
+
+
 def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optional[Job]:
     job_state = _get(jijle, "state")
+
+    # linters yell at this (which is good!) but set("abc") == set(["a", "b", "c"])
+    if IGNORE_STATES.intersection(set(job_state)):  # type: ignore
+        return None
 
     requested_queues = [str(x.text) for x in jijle.findall("hard_req_queue")]
 
