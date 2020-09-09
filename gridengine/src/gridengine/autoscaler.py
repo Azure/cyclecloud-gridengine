@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 from argparse import ArgumentParser
 from typing import Any, Dict, List, Optional
@@ -200,7 +201,7 @@ def calculate_demand(
     def parse_gridengine_hostgroups(node: Node) -> List[str]:
         hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
         if hostgroups_expr:
-            return hostgroups_expr.split(",")
+            return re.split(",| +", hostgroups_expr)
         return []
 
     demand_calculator.node_mgr.add_default_resource(
