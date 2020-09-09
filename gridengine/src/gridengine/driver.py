@@ -18,14 +18,12 @@ from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.constraints import (
     BaseNodeConstraint,
     NodeConstraint,
-    ReadOnlyAlias,
     XOr,
     register_parser,
 )
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import NodeManager
 from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
-from hpc.autoscale.util import partition
 
 from gridengine import environment as envlib
 from gridengine.parallel_environments import (
@@ -119,11 +117,6 @@ class GridEngineDriver:
                 .split()
             )
             by_hostlist[hostlist] = [n.split(".")[0] for n in fqdns]
-
-        by_queue = partition(
-            nodes_to_delete,
-            lambda n: (n.resources.get("slot_type") or n.nodearray) + ".q",
-        )
 
         hostnames_to_delete: Set[str] = set()
 
@@ -723,7 +716,7 @@ def _get_jobs_and_nodes(
     # -f -- full output. Ambiguous what this means, but in this case it includes host information so that
     # we can get one consistent view (i.e. not split between two calls, introducing a race condition)
     # qstat -xml -s pr -r -f -F
-    cmd = [QSTAT_PATH, "-xml", "-s", "pr", "-r", "-f", "-F"]
+    cmd = [QSTAT_PATH, "-xml", "-s", "prs", "-r", "-f", "-F"]
     relevant_complexes = (
         autoscale_config.get("gridengine", {}).get("relevant_complexes") or []
     )
@@ -737,9 +730,12 @@ def _get_jobs_and_nodes(
 
     nodes, running_jobs = _parse_scheduler_nodes(root, ge_queues)
     pending_jobs = _parse_jobs(root, ge_queues)
-    by_job_id = partition(pending_jobs, lambda j: j.name)
-    for rjob in running_jobs:
-        by_job_id.pop(rjob.name, {})
+    # by_job_id = partition(pending_jobs, lambda j: j.name)
+    # for rjob in running_jobs:
+    #     if rjob.name in by_job_id:
+    #         idle_job = by_job_id[rjob.name]
+    #         idle_job.iterations_remaining -= rjob.iterations
+    #     by_job_id.pop(rjob.name, {})
     return pending_jobs, nodes
 
 

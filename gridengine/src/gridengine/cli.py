@@ -2,11 +2,10 @@ import code
 import io
 import json
 import os
-import re
 import sys
 import typing
 from argparse import ArgumentParser
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, TextIO, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job import demandprinter
@@ -691,12 +690,19 @@ def main(argv: Iterable[str] = None) -> None:
     )
 
     initconfig_parser.add_argument(
-        "--idle-timeout", default=300, type=int, dest="gridengine__idle_timeout"
+        "--idle-timeout", default=300, type=int, dest="idle_timeout"
     )
     initconfig_parser.add_argument(
-        "--disable-pgs-for-pe", default=[], type=str, action="append",
-        help="Disable creation of placement groups for a parallel environment. " + 
-        "This can be invoked more than once.", dest="disable_pgs_for_pe"
+        "--boot-timeout", default=1800, type=int, dest="boot_timeout"
+    )
+    initconfig_parser.add_argument(
+        "--disable-pgs-for-pe",
+        default=[],
+        type=str,
+        action="append",
+        help="Disable creation of placement groups for a parallel environment. "
+        + "This can be invoked more than once.",
+        dest="disable_pgs_for_pe",
     )
 
     add_parser("jobs", jobs)
