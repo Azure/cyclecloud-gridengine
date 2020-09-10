@@ -3,6 +3,7 @@
 import re
 import typing
 from abc import ABC, abstractmethod
+from io import StringIO
 from shutil import which
 from typing import Any, Dict, List, Optional, Union
 
@@ -243,8 +244,7 @@ class GridEngineQueue:
             hostname = fqdn.strip().lower().split(".")[0]
             self.__slots[ht.Hostname(hostname)] = slot
 
-        for tok in queue_config["pe_list"].split(","):
-
+        for tok in tokenize_pe_list(queue_config["pe_list"]):
             tok = tok.strip()
 
             if tok == "NONE":
@@ -262,7 +262,7 @@ class GridEngineQueue:
                 pe_name_expr = tok
                 hostgroups = [x for x in self.__hostlist if x.startswith("@")]
 
-            pe_names = pe_name_expr.split()
+            pe_names = re.split(",| +", pe_name_expr)
 
             for pe_name in pe_names:
                 if pe_name not in ge_env.pes:
@@ -611,3 +611,32 @@ class Complex:
             self.default,
             self.urgency,
         )
+
+
+def tokenize_pe_list(expr: str) -> List[str]:
+    buf = StringIO()
+
+    in_left_bracket = False
+
+    toks = []
+
+    for c in expr:
+        if c.isalnum():
+            buf.write(c)
+            continue
+        if c == "[":
+            in_left_bracket = True
+            continue
+        if c == "]":
+            in_left_bracket = False
+
+        if c in [" ", ","] and not in_left_bracket:
+            toks.append(buf.getvalue())
+            buf = StringIO()
+        else:
+            buf.write(c)
+
+    if buf.getvalue():
+        toks.append(buf.getvalue())
+        buf = StringIO()
+    return toks
