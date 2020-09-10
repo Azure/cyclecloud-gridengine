@@ -6,6 +6,9 @@ from subprocess import check_call
 from typing import Optional
 
 
+LIBS = ["cyclecloud_api-8.0.1-py2.py3-none-any.whl", "cyclecloud-scalelib-0.1.1.tar.gz", "cyclecloud-gridengine-2.0.0.tar.gz"]
+
+
 def execute() -> None:
     parser = configparser.ConfigParser()
     ini_path = os.path.abspath("project.ini")
@@ -16,16 +19,6 @@ def execute() -> None:
     version = parser.get("project", "version")
     if not version:
         raise RuntimeError("Missing [project] -> version in {}".format(ini_path))
-
-    blobs = parser.get("blobs", "Files")
-    if not blobs:
-        raise RuntimeError("Missing [blobs] -> Files in {}".format(ini_path))
-
-    dependencies = [
-        x.strip() for x in blobs.split(",") if x.strip().endswith(".tar.gz") or x.strip().endswith(".whl")
-    ]
-    
-    dependencies = [x for x in dependencies if not x.startswith("cyclecloud-gridengine-pkg")]
 
     if not os.path.exists("dist"):
         os.makedirs("dist")
@@ -45,8 +38,8 @@ def execute() -> None:
         with open(path, "rb") as fr:
             tf.addfile(tarinfo, fr)
 
-    for dep in dependencies:
-        dep_path = os.path.abspath(os.path.join("blobs", dep))
+    for dep in LIBS:
+        dep_path = os.path.abspath(os.path.join("libs", dep))
         _add("packages/" + dep, dep_path)
         check_call(["pip", "download", dep_path], cwd=build_dir)
     
