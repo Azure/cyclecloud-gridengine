@@ -466,7 +466,9 @@ xuser_lists           NONE
 projects              NONE
 xprojects             NONE
 usage_scaling         NONE
-report_variables      NONE""".format(
+report_variables      NONE
+license_constraints   NONE
+license_oversubscription NONE""".format(
             hostname=node.hostname, complex_values_csv=complex_values_csv
         )
 

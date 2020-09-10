@@ -1,6 +1,7 @@
 default[:gridengine][:make] = "sge"
 default[:gridengine][:version] = "2011.11"
 default[:gridengine][:root] = "/sched/sge/sge-2011.11"
+default[:gridengine][:cell] = "default"
 default[:gridengine][:package_extension] = "tar.gz"
 default[:gridengine][:installer] = "cyclecloud-gridengine-pkg-2.0.0.tar.gz"
 default[:gridengine][:use_external_download] = false
