@@ -26,6 +26,7 @@ from hpc.autoscale.node.nodemanager import NodeManager
 from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
 
 from gridengine import environment as envlib
+from gridengine import validate as validatelib
 from gridengine.parallel_environments import (
     FixedProcesses,
     GridEngineQueue,
@@ -973,7 +974,8 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
     else:
         hostgroups = ge_queue.get_hostgroups_for_ht()
         if not hostgroups:
-            logging.error("No hostgroup for job %s", job_id)
+            validatelib.validate_ht_hostgroup(ge_queue, logging.warning)
+            logging.error("No hostgroup for job %s. See warnings above.", job_id)
             return None
         constraints.append(
             QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, None)
