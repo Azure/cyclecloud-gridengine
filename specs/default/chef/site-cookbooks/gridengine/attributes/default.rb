@@ -7,6 +7,17 @@ default[:gridengine][:installer] = "cyclecloud-gridengine-pkg-2.0.0.tar.gz"
 default[:gridengine][:use_external_download] = false
 default[:gridengine][:remote_prefix] = nil
 
+default[:gridengine][:sge_qmaster_port] = "537"
+default[:gridengine][:sge_execd_port] = "538"
+default[:gridengine][:sge_cluster_name] = "grid1"
+default[:gridengine][:gid_range] = "20000-20100"
+default[:gridengine][:qmaster_spool_dir] = "#{node['gridengine']['root']}/#{node['gridengine']['cell']}/spool/qmaster" 
+default[:gridengine][:execd_spool_dir] = "#{node['gridengine']['root']}/#{node['gridengine']['cell']}/spool"
+default[:gridengine][:spooling_method] = "berkeleydb"
+
+default[:gridengine][:shadow_host] = ""
+default[:gridengine][:admin_mail] = ""
+
 default[:gridengine][:idle_timeout] = 300
 
 default[:gridengine][:shared][:bin] = true

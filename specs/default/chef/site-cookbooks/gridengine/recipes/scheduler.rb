@@ -56,7 +56,7 @@ end
 nodename = node[:cyclecloud][:instance][:hostname]
 
 gridengineroot = node[:gridengine][:root]     # /sched/ge/ge-8.2.0-demo
-
+gridenginecell = node[:gridengine][:cell] 
 
 directory gridengineroot do
   owner node[:gridengine][:user][:name]
@@ -81,34 +81,44 @@ template "#{gridengineroot}/conf/#{nodename}.conf" do
   variables(
     :gridengineroot => gridengineroot,
     :nodename => nodename,
-    :ignore_fqdn => node[:gridengine][:ignore_fqdn]
+    :ignore_fqdn => node[:gridengine][:ignore_fqdn],
+    :gridengineclustername => node[:gridengine][:sge_cluster_name],
+    :gridenginecell => gridenginecell,
+    :gridengine_gid_range => node[:gridengine][:gid_range],
+    :gridengine_admin_mail => node[:gridengine][:admin_mail],
+    :gridengine_shadow_host => node[:gridengine][:shadow_host],
+    :execd_spool_dir => node[:gridengine][:execd_spool_dir],
+    :qmaster_spool_dir => node[:gridengine][:qmaster_spool_dir],
+    :gridengine_spooling_method => node[:gridengine][:spooling_method],
+    :gridengine_qmaster_port => node[:gridengine][:sge_qmaster_port],
+    :gridengine_execd_port => node[:gridengine][:sge_execd_port]
   )
 end
 
 execute "installqm" do
   command "cd #{gridengineroot} && ./inst_sge -m -auto ./conf/#{nodename}.conf"
-  creates "#{gridengineroot}/default"
+  creates "#{gridengineroot}/#{gridenginecell}"
   action :run
 end
 
 link "/etc/profile.d/sgesettings.sh" do
-  to "#{gridengineroot}/default/common/settings.sh"
+  to "#{gridengineroot}/#{gridenginecell}/common/settings.sh"
 end
 
 link "/etc/profile.d/sgesettings.csh" do
-  to "#{gridengineroot}/default/common/settings.csh"
+  to "#{gridengineroot}/#{gridenginecell}/common/settings.csh"
 end
 
 link "/etc/cluster-setup.sh" do
-  to "#{gridengineroot}/default/common/settings.sh"
+  to "#{gridengineroot}/#{gridenginecell}/common/settings.sh"
 end
 
 link "/etc/cluster-setup.csh" do
-  to "#{gridengineroot}/default/common/settings.csh"
+  to "#{gridengineroot}/#{gridenginecell}/common/settings.csh"
 end
 
 execute "set qmaster hostname" do
-  command "hostname -f > #{gridengineroot}/default/common/act_qmaster"
+  command "hostname -f > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
 end
 
 case node[:platform_family]
@@ -155,14 +165,14 @@ end
 # Remove any hosts from previous runs
 bash "clear old hosts" do
   code <<-EOH
-  for HOST in `ls -1 #{gridengineroot}/default/spool/ | grep -v qmaster`; do
+  for HOST in `ls -1 #{gridengineroot}/#{gridenginecell}/spool/ | grep -v qmaster`; do
     . /etc/cluster-setup.sh
     qmod -d *@${HOST}
     qconf -dattr hostgroup hostlist ${HOST} @allhosts
     qconf -de ${HOST}
     qconf -ds ${HOST}
     qconf -dh ${HOST}
-    rm -rf #{gridengineroot}/default/spool/${HOST};
+    rm -rf #{gridengineroot}/#{gridenginecell}/spool/${HOST};
   done && touch #{chefstate}/gridengine.clear.hosts
   EOH
   creates "#{chefstate}/gridengine.clear.hosts"
@@ -181,7 +191,7 @@ end
 
 service 'sgeexecd' do
   action [:enable, :start]
-  not_if { pidfile_running? ::File.join(gridengineroot, 'default', 'spool', node[:hostname], 'execd.pid') }
+  not_if { pidfile_running? ::File.join(gridengineroot, gridenginecell, 'spool', node[:hostname], 'execd.pid') }
 end
 
 execute "setglobal" do
@@ -197,8 +207,8 @@ execute "setsched" do
 end
 
 execute "showalljobs" do
-  command "echo \"-u *\" > #{gridengineroot}/default/common/sge_qstat"
-  creates "#{gridengineroot}/default/common/sge_qstat"
+  command "echo \"-u *\" > #{gridengineroot}/#{gridenginecell}/common/sge_qstat"
+  creates "#{gridengineroot}/#{gridenginecell}/common/sge_qstat"
   action :run
 end
 
@@ -371,7 +381,7 @@ file monitoring_config do
     "cluster_name": "#{node[:cyclecloud][:cluster][:name]}",
     "hostname": "#{node[:cyclecloud][:instance][:public_hostname]}",
     "ports": {"ssh": 22},
-    "cellname": "default",
+    "cellname": "#{gridenginecell}",
     "gridengineroot": "#{node[:gridengine][:root]}",
     "submitonce": {#{applications}}
   }

@@ -12,13 +12,13 @@ SGE_ROOT="<%= @gridengineroot %>"
 # Please enter the port in this way: 1300
 # Please do not this: 1300/tcp
 #(mandatory for qmaster installation)
-SGE_QMASTER_PORT="537"
+SGE_QMASTER_PORT="<%= @gridengine_qmaster_port %>"
 
 # SGE_EXECD_PORT is used by execd for communication
 # Please enter the port in this way: 1300
 # Please do not this: 1300/tcp
 #(mandatory for qmaster installation)
-SGE_EXECD_PORT="538"
+SGE_EXECD_PORT="<%= @gridengine_execd_port %>"
 
 # SGE_ENABLE_SMF
 # if set to false SMF will not control SGE services
@@ -33,7 +33,7 @@ SGE_ENABLE_ST="true"
 
 # SGE_CLUSTER_NAME
 # Name of this cluster (used by SMF as an service instance name)
-SGE_CLUSTER_NAME="grid1"
+SGE_CLUSTER_NAME="<%= @gridengineclustername %>"
 
 # SGE_JMX_PORT is used by qmasters JMX MBean server
 # mandatory if install_qmaster -jmx -auto <cfgfile>
@@ -75,7 +75,7 @@ SGE_ADDITIONAL_JVM_ARGS="-Xmx256m"
 # CELL_NAME, will be a dir in SGE_ROOT, contains the common dir
 # Please enter only the name of the cell. No path, please
 #(mandatory for qmaster and execd installation)
-CELL_NAME="default"
+CELL_NAME="<%= @gridenginecell %>"
 
 # ADMIN_USER, if you want to use a different admin user than the owner,
 # of SGE_ROOT, you have to enter the user name, here
@@ -84,7 +84,7 @@ ADMIN_USER="<%= node[:gridengine][:user][:name] %>"
 
 # The dir, where qmaster spools this parts, which are not spooled by DB
 #(mandatory for qmaster installation)
-QMASTER_SPOOL_DIR="<%= @gridengineroot %>/default/spool/qmaster"
+QMASTER_SPOOL_DIR="<%= @qmaster_spool_dir %>"
 
 # The dir, where the execd spools (active jobs)
 # This entry is needed, even if your are going to use
@@ -92,7 +92,7 @@ QMASTER_SPOOL_DIR="<%= @gridengineroot %>/default/spool/qmaster"
 # be spooled in the database. The execution daemon still needs a spool
 # directory
 #(mandatory for qmaster installation)
-EXECD_SPOOL_DIR="<%= @gridengineroot %>/default/spool"
+EXECD_SPOOL_DIR="<%= @execd_spool_dir %>"
 
 # For monitoring and accounting of jobs, every job will get
 # unique GID. So you have to enter a free GID Range, which
@@ -100,12 +100,12 @@ EXECD_SPOOL_DIR="<%= @gridengineroot %>/default/spool"
 # If you want to run 100 Jobs at the same time on one host you
 # have to enter a GID-Range like that: 16000-16100
 #(mandatory for qmaster installation)
-GID_RANGE="20000-20100"
+GID_RANGE="<%= @gridengine_gid_range %>"
 
 # If SGE is compiled with -spool-dynamic, you have to enter here, which
 # spooling method should be used. (classic or berkeleydb)
 #(mandatory for qmaster installation)
-SPOOLING_METHOD="berkeleydb"
+SPOOLING_METHOD="<%= @gridengine_spooling_method %>"
 
 # Name of the Server, where the Spooling DB is running on
 # if spooling methode is berkeleydb, it must be "none", when
@@ -176,7 +176,7 @@ COPY_COMMAND="scp"
 DEFAULT_DOMAIN="none"
 
 # If a job stops, fails, finish, you can send a mail to this adress
-ADMIN_MAIL="none"
+ADMIN_MAIL="<%= @gridengine_admin_mail %>"
 
 # If true, the rc scripts (sgemaster, sgeexecd, sgebdb) will be added,
 # to start automatically during boottime

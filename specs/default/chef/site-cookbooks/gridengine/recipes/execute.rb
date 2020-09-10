@@ -51,6 +51,7 @@ myplatform=node[:platform]
 myplatform = "centos" if node[:platform_family] == "rhel" # TODO: fix this hack for redhat
 
 
+# Case this on version 7
 #template "/etc/init.d/sgeexecd" do
 #  source "sgeexecd.erb"
 #  mode 0755
@@ -94,7 +95,17 @@ template "#{Chef::Config['file_cache_path']}/compnode.conf" do
   variables lazy {
     {
       :gridengineroot => gridengineroot,
-      :nodename => node[:hostname]
+      :nodename => node[:hostname],
+      :gridengineclustername => node[:gridengine][:sge_cluster_name],
+      :gridenginecell => gridenginecell,
+      :gridengine_gid_range => node[:gridengine][:gid_range],
+      :gridengine_admin_mail => node[:gridengine][:admin_mail],
+      :gridengine_shadow_host => node[:gridengine][:shadow_host],
+      :execd_spool_dir => node[:gridengine][:execd_spool_dir],
+      :qmaster_spool_dir => node[:gridengine][:qmaster_spool_dir],
+      :gridengine_spooling_method => node[:gridengine][:spooling_method],
+      :gridengine_qmaster_port => node[:gridengine][:sge_qmaster_port],
+      :gridengine_execd_port => node[:gridengine][:sge_execd_port]
     }
   }
 end
@@ -135,6 +146,6 @@ end
 service 'sgeexecd' do
   action [:start]
   only_if { ::File.exist?('/etc/gridengineexecd.installed') }
-  not_if { pidfile_running? ::File.join(gridengineroot, 'default', 'spool', node[:hostname], 'execd.pid') }
+  not_if { pidfile_running? ::File.join(gridengineroot, gridenginecell, 'spool', node[:hostname], 'execd.pid') }
 end
 
