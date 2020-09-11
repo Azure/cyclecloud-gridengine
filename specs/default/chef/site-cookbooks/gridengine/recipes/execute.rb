@@ -36,8 +36,8 @@ shared_bin = node[:gridengine][:shared][:bin]
 
 if not(shared_bin)
   directory gridengineroot do
-    owner node[:gridengine][:user][:name]
-    group node[:gridengine][:group][:name]
+    owner node[:gridengine][:user][:uid]
+    group node[:gridengine][:user][:gid]
     mode "0755"
     action :create
     recursive true
@@ -51,27 +51,38 @@ myplatform=node[:platform]
 myplatform = "centos" if node[:platform_family] == "rhel" # TODO: fix this hack for redhat
 
 
-# Case this on version 7
-#template "/etc/init.d/sgeexecd" do
-#  source "sgeexecd.erb"
-#  mode 0755
-#  owner "root"
-#  group "root"
-#  variables({
-#    :gridengineroot => gridengineroot
-#  })
-#end
+# default case systemd
+sge_services = ["sgeexecd", "sgemasterd"]
+sge_service_names = []
+sge_services.each do |sge_service|
+  sge_service_template="#{sge_service}.service.erb"
+  sge_service_name="#{sge_service}.service"
+  sge_service_initfile="/etc/systemd/system/#{sge_service_name}"
+  # edge case sysvinit
+  case node['platform_family']
+  when 'rhel'
+    if node['platform_version'].to_i <= 6
+      sge_service_template="#{sge_service}.erb"
+      sge_service_name=sge_service
+      sge_service_initfile="/etc/init.d/#{sge_service}"
+    end
+  end
 
-template "/etc/systemd/system/sgeexecd.service" do
-  source "sgeexecd.service.erb"
-  mode 0644
-  owner "root"
-  group "root"
-  variables({
-    :gridengineroot => gridengineroot ,
-    :gridenginecell => gridenginecell ,
-  })
+  template sge_service_initfile do
+    source sge_service_template
+    mode 0755
+    owner "root"
+    group "root"
+    variables(
+      :gridengineroot => gridengineroot,
+      :gridenginecell => gridenginecell
+    )
+  end
+  sge_service_names.append(sge_service_name)
 end
+
+sge_execd_service = sge_service_names[0]
+sge_qmasterd_service = sge_service_names[1]
 
 
 directory "/etc/acpi/events" do
@@ -129,23 +140,11 @@ execute "install_gridengine_execd" do
   cwd gridengineroot
   command "./inst_sge -x -noremote -auto #{Chef::Config['file_cache_path']}/compnode.conf && touch /etc/gridengineexecd.installed"
   creates "/etc/gridengineexecd.installed"
-  notifies :enable, 'service[sgeexecd]', :immediately
+  notifies :enable, "service[#{sge_execd_service}]", :immediately
 end
 
-# # special handling of memory, as we don't have a good way to get the true value a priori
-# memory = node[:memory][:total].sub("B", "")  # ends with kB, we want just k
-# execute "set m_mem_free" do
-#   cwd gridengineroot
-#   command ". #{gridengine_settings} && qconf -mattr exechost complex_values m_mem_free=#{memory} $(hostname) && touch /etc/gridengineexecd.m_mem_free"
-#   creates "/etc/gridengineexecd.m_mem_free"
-#   only_if { ::File.exist?('/etc/gridengineexecd.installed') }
-#   not_if { ::File.exist?('/etc/gridengineexecd.m_mem_free') }
-# end
-
 # Is this pidfile_running check actually working? I see the file, but I don't see the debug logs
-service 'sgeexecd' do
-  action [:start]
-  only_if { ::File.exist?('/etc/gridengineexecd.installed') }
-  not_if { pidfile_running? ::File.join(gridengineroot, gridenginecell, 'spool', node[:hostname], 'execd.pid') }
+service sge_execd_service do
+  action [:nothing]
 end
 

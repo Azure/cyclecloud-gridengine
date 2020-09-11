@@ -59,8 +59,8 @@ gridengineroot = node[:gridengine][:root]     # /sched/ge/ge-8.2.0-demo
 gridenginecell = node[:gridengine][:cell] 
 
 directory gridengineroot do
-  owner node[:gridengine][:user][:name]
-  group node[:gridengine][:group][:name]
+  owner node[:gridengine][:user][:uid]
+  group node[:gridengine][:user][:gid]
   mode "0755"
   action :create
   recursive true
@@ -69,8 +69,8 @@ end
 include_recipe "::_install"
 
 directory File.join(gridengineroot, 'conf') do
-  owner node[:gridengine][:user][:name]
-  group node[:gridengine][:group][:name]
+  owner node[:gridengine][:user][:uid]
+  group  node[:gridengine][:user][:gid]
   mode "0755"
   action :create
   recursive true
@@ -148,19 +148,38 @@ template "#{gridengineroot}/conf/sched" do
   mode "0755"
 end
 
-template "/etc/init.d/sgemaster" do
-  source "sgemaster.erb"
-  mode 0755
-  owner "root"
-  group "root"
-  variables(
-    :gridengineroot => gridengineroot
-  )
+# default case systemd
+sge_services = ["sgeexecd", "sgemasterd"]
+sge_service_names = []
+sge_services.each do |sge_service|
+  sge_service_template="#{sge_service}.service.erb"
+  sge_service_name="#{sge_service}.service"
+  sge_service_initfile="/etc/systemd/system/#{sge_service_name}"
+  # edge case sysvinit
+  case node['platform_family']
+  when 'rhel'
+    if node['platform_version'].to_i <= 6
+      sge_service_template="#{sge_service}.erb"
+      sge_service_name=sge_service
+      sge_service_initfile="/etc/init.d/#{sge_service}"
+    end
+  end
+
+  template sge_service_initfile do
+    source sge_service_template
+    mode 0755
+    owner "root"
+    group "root"
+    variables(
+      :gridengineroot => gridengineroot,
+      :gridenginecell => gridenginecell
+    )
+  end
+  sge_service_names.append(sge_service_name)
 end
 
-service "sgemaster" do
-  action [:enable, :start]
-end
+sge_execd_service = sge_service_names[0]
+sge_qmasterd_service = sge_service_names[1]
 
 # Remove any hosts from previous runs
 bash "clear old hosts" do
@@ -179,19 +198,8 @@ bash "clear old hosts" do
   action :run
 end
 
-template "/etc/init.d/sgeexecd" do
-  source "sgeexecd.erb"
-  mode 0755
-  owner "root"
-  group "root"
-  variables(
-    :gridengineroot => gridengineroot
-  )
-end
-
-service 'sgeexecd' do
-  action [:enable, :start]
-  not_if { pidfile_running? ::File.join(gridengineroot, gridenginecell, 'spool', node[:hostname], 'execd.pid') }
+service sge_execd_service do
+  action [:enable]
 end
 
 execute "setglobal" do
@@ -216,6 +224,10 @@ execute "schedexecinst" do
   command "cd #{gridengineroot} && ./inst_sge -x -noremote -auto #{gridengineroot}/conf/#{nodename}.conf && touch #{chefstate}/gridengine.sgesched.schedexecinst"
   creates "#{chefstate}/gridengine.sgesched.schedexecinst"
   action :run
+end
+
+service sge_qmasterd_service do
+  action [:enable]
 end
 
 template "#{gridengineroot}/conf/exec" do
@@ -352,11 +364,6 @@ end
 execute "gridengine.qcfg" do
   command ". /etc/cluster-setup.sh && qconf -Rattr queue #{gridengineroot}/conf/gridengine.q all.q && touch #{chefstate}/gridengine.qcfg"
   only_if "test -f #{gridengineroot}/SGESuspend.sh && test -f #{gridengineroot}/SGETerm.sh && test -f #{gridengineroot}/conf/gridengine.q && test ! -f #{chefstate}/gridengine.qcfg"
-end
-
-execute "Add cycle_server user as a manager" do
-  command ". /etc/cluster-setup.sh && qconf -am cycle_server"
-  not_if ". /etc/cluster-setup.sh && qconf -sm | grep cycle_server"
 end
 
 # Pull in the Jetpack LWRP
