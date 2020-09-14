@@ -118,7 +118,11 @@ link "/etc/cluster-setup.csh" do
 end
 
 execute "set qmaster hostname" do
-  command "hostname -f > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
+  if node[:platform_family] == "rhel" && node[:platform_version] < "7" then
+    command "echo #{node[:hostname]} > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
+  else
+    command "hostname -f > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
+  fi
 end
 
 case node[:platform_family]
