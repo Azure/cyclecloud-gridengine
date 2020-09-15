@@ -203,7 +203,7 @@ class GridEngineDriver:
         )
 
         self.ge_env.qbin.qconf(
-            ["-purge", "queue", "slots", queue_host,]  # noqa: ignore=E231
+            ["-purge", "queue", "slots", queue_host,]
         )
 
         queue.slots.pop(hostname)
@@ -530,13 +530,7 @@ license_oversubscription NONE""".format(
             logging.info("Adding hostname %s to hostgroup %s", node.hostname, hostgroup)
 
             self.ge_env.qbin.qconf(
-                [
-                    "-aattr",
-                    "hostgroup",
-                    "hostlist",
-                    node.hostname,
-                    hostgroup,
-                ]  # noqa: ignore=E231
+                ["-aattr", "hostgroup", "hostlist", node.hostname, hostgroup,]
             )
 
     def clean_hosts(self, invalid_nodes: List[SchedulerNode]) -> None:

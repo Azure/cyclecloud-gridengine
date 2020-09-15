@@ -40,11 +40,8 @@ def test_hg_to_pes() -> None:
             },
         },
     ) == {
-        "hpcq": {
-            "@hpcmpipg0": ["mpi"],
-            "@hpcmpislotspg0": ["mpislots"],
-        },  # noqa: ignore=E231
-        "hpcotherq": {"@hpcotherqpg0": ["mpi", "mpislots"],},  # noqa: ignore=E231
+        "hpcq": {"@hpcmpipg0": ["mpi"], "@hpcmpislotspg0": ["mpislots"],},
+        "hpcotherq": {"@hpcotherqpg0": ["mpi", "mpislots"],},
     }
 
 

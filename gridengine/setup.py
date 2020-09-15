@@ -98,7 +98,7 @@ def run_type_checking() -> None:
         ]
     )
 
-    check_call(["flake8", "--ignore=F405,E501,W503", "src", "test", "setup.py"])
+    check_call(["flake8", "--ignore=E231,F405,E501,W503", "src", "test", "setup.py"])
 
 
 class TypeChecking(Command):
