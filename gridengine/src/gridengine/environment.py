@@ -21,6 +21,8 @@ class GridEngineEnvironment:
         pes: Optional[Dict[str, ParallelEnvironment]] = None,
         complexes: Optional[Dict[str, Complex]] = None,
         qbin: Optional[QBin] = None,
+        hostgroups: Optional[Dict[str, List[str]]] = None,
+        host_memberships: Optional[Dict[str, List[str]]] = None,
     ) -> None:
         self.__jobs: List[Job] = jobs or []
         self.__nodes: List[Node] = nodes or []
@@ -28,6 +30,8 @@ class GridEngineEnvironment:
         self.__pes: Dict[str, ParallelEnvironment] = pes or {}
         self.__complexes: Dict[str, Complex] = complexes or {}
         self.__qbin = qbin or QBinImpl()
+        self.__hostgroups = hostgroups or {}
+        self.__host_memberships = host_memberships or {}
 
     @property
     def jobs(self) -> List[Job]:
@@ -86,6 +90,14 @@ class GridEngineEnvironment:
         self.__complexes[complex.name] = complex
         self.__complexes[complex.shortcut] = complex
 
+    @property
+    def hostgroups(self) -> Dict[str, List[str]]:
+        return self.__hostgroups
+
+    @property
+    def host_memberships(self) -> Dict[str, List[str]]:
+        return self.__host_memberships
+
 
 def from_qconf(
     autoscale_config: Dict, qbin: Optional[QBin] = None
@@ -98,8 +110,19 @@ def from_qconf(
     complexes = read_complexes(autoscale_config, qbin)
     ge_env = GridEngineEnvironment([], [], {}, pes, complexes)
 
+    # map each host (lowercase) to its set of hostgroups
+    for hostgroup in ge_env.qbin.qconf(["-shgrpl"]).split():
+        hosts = ge_env.qbin.qconf(["-shgrp_resolved", hostgroup]).split()
+        hosts = [h.split(".")[0].lower() for h in hosts]
+        ge_env.hostgroups[hostgroup] = hosts
+        for host in hosts:
+            if host not in ge_env.host_memberships:
+                ge_env.host_memberships[host] = []
+            ge_env.host_memberships[host].append(hostgroup)
+
     read_queue_configs(autoscale_config, ge_env)
-    jobs, nodes = driver._get_jobs_and_nodes(autoscale_config, qbin, ge_env.queues)
+    jobs, nodes = driver._get_jobs_and_nodes(autoscale_config, ge_env)
     ge_env.jobs.extend(jobs)
     ge_env.nodes.extend(nodes)
+
     return ge_env

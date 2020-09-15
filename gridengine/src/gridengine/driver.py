@@ -31,6 +31,7 @@ from gridengine.allocation_rules import FixedProcesses
 from gridengine.parallel_environments import ParallelEnvironment
 from gridengine.qbin import QBin, check_output
 from gridengine.queue import GridEngineQueue
+from gridengine.util import get_node_hostgroups, get_node_qname
 
 
 def new_driver(
@@ -81,9 +82,7 @@ class GridEngineDriver:
         return to_shutdown
 
     def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
-        return _get_jobs_and_nodes(
-            self.autoscale_config, self.ge_env.qbin, self.ge_env.queues
-        )
+        return _get_jobs_and_nodes(self.autoscale_config, self.ge_env)
 
     def handle_post_delete(self, nodes_to_delete: List[Node]) -> None:
         if self.read_only:
@@ -461,7 +460,9 @@ license_oversubscription NONE""".format(
         )
 
     def _add_slots(self, node: Node) -> bool:
-        ge_qname = node.software_configuration.get("gridengine_qname", "")
+        ge_qname = node.metadata.get(
+            "gridengine_qname", node.software_configuration.get("gridengine_qname", "")
+        )
         if not ge_qname:
             logging.warning(
                 "gridengine_qname is not set on %s so it can not join the cluster. Ignoring",
@@ -689,7 +690,7 @@ def _getr(e: Any, attr_name: str) -> str:
 
 
 def _get_jobs_and_nodes(
-    autoscale_config: Dict, qbin: QBin, ge_queues: Dict[str, GridEngineQueue],
+    autoscale_config: Dict, ge_env: envlib.GridEngineEnvironment,
 ) -> Tuple[List[Job], List[SchedulerNode]]:
     # some magic here for the args
     # -g d -- show all the tasks, do not group
@@ -705,19 +706,22 @@ def _get_jobs_and_nodes(
     if relevant_complexes:
         cmd.append(" ".join(relevant_complexes))
     logging.debug("Query jobs and nodes with cmd '%s'", " ".join(cmd))
-    raw_xml = qbin.qstat(cmd)
+    raw_xml = ge_env.qbin.qstat(cmd)
     raw_xml_file = six.StringIO(raw_xml)
     doc = ElementTree.parse(raw_xml_file)
     root = doc.getroot()
 
-    nodes, running_jobs = _parse_scheduler_nodes(root, qbin, ge_queues)
-    pending_jobs = _parse_jobs(root, ge_queues)
+    nodes, running_jobs = _parse_scheduler_nodes(root, ge_env)
+    pending_jobs = _parse_jobs(root, ge_env.queues)
     return pending_jobs, nodes
 
 
 def _parse_scheduler_nodes(
-    root: Element, qbin: QBin, ge_queues: Dict[str, GridEngineQueue]
+    root: Element, ge_env: envlib.GridEngineEnvironment,
 ) -> Tuple[List[SchedulerNode], List[Job]]:
+    qbin = ge_env.qbin
+    ge_queues = ge_env.queues
+
     running_jobs: Dict[str, Job] = {}
     schedulers = qbin.qconf(["-sss"]).splitlines()
 
@@ -808,11 +812,18 @@ def _parse_scheduler_nodes(
         )  # TODO resv?
 
         if "slots" in ge_queue.complexes:
-            compute_node.available[
-                ge_queue.complexes["slots"].shortcut
-            ] = compute_node.available["slots"]
+            s = ge_queue.complexes["slots"].shortcut
+            compute_node.available[s] = compute_node.available["slots"]
+
         _assign_jobs(compute_node, qiqle, running_jobs, ge_queues)
 
+        compute_node.metadata["gridengine_qname"] = queue_name
+
+        compute_node.metadata["gridengine_hostgroups"] = ",".join(
+            ge_env.host_memberships.get(
+                compute_node.hostname.lower(), str(ge_env.host_memberships)
+            )
+        )
         compute_nodes[compute_node.hostname] = compute_node
 
     return list(compute_nodes.values()), list(running_jobs.values())
@@ -1115,7 +1126,7 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 ],
             )
 
-        node_qname = node.available.get("_gridengine_qname")
+        node_qname = get_node_qname(node)
 
         # nodes that don't exist are not in a queue, by definition
         if not node_qname and not node.exists:
@@ -1133,9 +1144,8 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 ],
             )
 
-        node_hostgroups: Optional[Set[str]] = node.available.get(
-            "_gridengine_hostgroups"
-        )
+        node_hostgroups: Set[str] = set(get_node_hostgroups(node))
+
         if not node_hostgroups:
             node_hostgroups = set() if node.exists else self.hostgroups_set
         else:
@@ -1156,17 +1166,17 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
         return SatisfiedResult("success", self, node)
 
     def do_decrement(self, node: Node) -> bool:
-        node_qname = node.available.get("_gridengine_qname") or self.qname
+        node_qname = get_node_qname(node) or self.qname
         assert node_qname == self.qname
 
-        node.available["_gridengine_qname"] = self.qname
+        node_hostgroups = set(get_node_hostgroups(node) or self.hostgroups_set)
 
-        node_hostgroups = set(
-            node.available.get("_gridengine_hostgroups") or self.hostgroups_set
-        )
-        assert node_hostgroups == self.hostgroups_set
+        hg_intersect = self.hostgroups_set.intersection(node_hostgroups)
+        if not hg_intersect:
+            raise AssertionError(
+                "{} does not intersect {}".format(node_hostgroups, self.hostgroups_set)
+            )
 
-        node.available["_gridengine_hostgroups"] = sorted(list(node_hostgroups))
         assert node.placement_group in [
             None,
             self.placement_group,

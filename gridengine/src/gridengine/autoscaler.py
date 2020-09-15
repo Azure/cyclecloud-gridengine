@@ -195,21 +195,14 @@ def calculate_demand(
     demand_calculator = new_demand_calculator(
         config, ge_env, ge_driver, ctx_handler, node_history
     )
-    demand_calculator.node_mgr.add_default_resource(
-        {},
-        "_gridengine_qname",
-        lambda node: node.software_configuration.get("gridengine_qname") or "",
-    )
 
     def parse_gridengine_hostgroups(node: Node) -> List[str]:
-        hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
+        hostgroups_expr = node.metadata.get("gridengine_hostgroups")
+        if not hostgroups_expr:
+            hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
         if hostgroups_expr:
             return re.split(",| +", hostgroups_expr)
         return []
-
-    demand_calculator.node_mgr.add_default_resource(
-        {}, "_gridengine_hostgroups", parse_gridengine_hostgroups
-    )
 
     for name, default_complex in ge_env.complexes.items():
         if name == "slots":
@@ -266,6 +259,7 @@ def print_demand(
                 "job_ids",
                 "exists",
                 "required",
+                "managed",
                 "slots",
                 "*slots",
                 "vm_size",
