@@ -4,7 +4,8 @@ from typing import Callable, Dict, List, Set
 from hpc.autoscale.node.node import Node
 
 from gridengine import autoscaler
-from gridengine.parallel_environments import GridEngineQueue
+from gridengine.qbin import QBin
+from gridengine.queue import GridEngineQueue
 
 UNBOLD = "\033[0m"
 BOLD = "\033[1m"
@@ -15,6 +16,30 @@ def bold(s: str) -> str:
 
 
 WarnFunction = Callable[..., None]
+
+
+def validate_queue(
+    queue: GridEngineQueue, qbin: QBin, warn_function: WarnFunction
+) -> bool:
+    # ensure that there is at least one host for each queue.
+    empty_hostgroups = []
+    for hostgroup in queue.hostlist:
+        if hostgroup == "NONE":
+            continue
+        if not hostgroup.startswith("@"):
+            # explicit hostnames are obviously
+            return True
+
+        if qbin.qconf(["-shgrp_resolved", hostgroup]).strip():
+            return True
+        empty_hostgroups.append(hostgroup)
+
+    warn_function(
+        "Queue %s has no hosts assigned to any of its hostgroups and you will not be able to submit to it.",
+        queue.qname,
+    )
+    warn_function("    Empty hostgroups = %s", " ".join(empty_hostgroups))
+    return False
 
 
 def validate_ht_hostgroup(queue: GridEngineQueue, warn_function: WarnFunction) -> bool:

@@ -23,13 +23,10 @@ from hpc.autoscale.results import (
 )
 from hpc.autoscale.util import partition_single
 
-from gridengine import autoscaler, environment, parallel_environments, validate
-from gridengine.driver import (
-    QCONF_PATH,
-    GridEngineDriver,
-    QueueAndHostgroupConstraint,
-    check_output,
-)
+from gridengine import autoscaler, environment, validate
+from gridengine.driver import GridEngineDriver, QueueAndHostgroupConstraint
+from gridengine.environment import from_qconf
+from gridengine.queue import GridEngineQueue
 
 
 def error(msg: Any, *args: Any) -> None:
@@ -168,13 +165,13 @@ def _find_nodes(
 
 def queues(config: Dict) -> None:
     ge_env = environment.from_qconf(config)
-    schedulers = check_output([QCONF_PATH, "-sss"]).decode()
+    schedulers = ge_env.qbin.qconf(["-sss"]).split()
     rows: List[List[str]] = []
 
     for qname, ge_queue in ge_env.queues.items():
 
         for hgrp in ge_queue.hostlist_groups:
-            fqdns = check_output([QCONF_PATH, "-shgrp", hgrp]).decode().splitlines()
+            fqdns = ge_env.qbin.qconf(["-shgrp", hgrp]).splitlines()
             for line in fqdns:
                 line = line.strip()
                 if not line:
@@ -208,10 +205,11 @@ def queues(config: Dict) -> None:
 
 def validate_func(config: Dict) -> None:
     ge_env = environment.from_qconf(config)
-    queue: parallel_environments.GridEngineQueue
+    queue: GridEngineQueue
     failure = False
     failure = validate.validate_nodes(config, warn) or failure
     for qname, queue in ge_env.queues.items():
+        failure = validate.validate_queue(queue, ge_env.qbin, warn) or failure
         failure = validate.validate_ht_hostgroup(queue, warn) or failure
         failure = validate.validate_pe_hostgroups(queue, warn) or failure
 
@@ -284,9 +282,9 @@ def complexes(config: Dict, include_irrelevant: bool = False) -> None:
             ge_config.pop("relevant_complexes")
 
     relevant = set(config.get("gridengine", {}).get("relevant_complexes", []))
-
+    ge_env = from_qconf(config)
     already_printed: typing.Set[str] = set()
-    for complex in parallel_environments.read_complexes(config).values():
+    for complex in ge_env.complexes.values():
         if (
             include_irrelevant
             or complex.name in relevant
