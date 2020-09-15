@@ -3,7 +3,7 @@ import math
 import os
 import socket
 import tempfile
-from subprocess import STDOUT, CalledProcessError
+from subprocess import CalledProcessError
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
@@ -27,19 +27,10 @@ from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
 
 from gridengine import environment as envlib
 from gridengine import validate as validatelib
-from gridengine.parallel_environments import (
-    FixedProcesses,
-    GridEngineQueue,
-    ParallelEnvironment,
-)
-from gridengine.util import (
-    QCONF_PATH,
-    QMOD_PATH,
-    QSTAT_PATH,
-    call,
-    check_call,
-    check_output,
-)
+from gridengine.allocation_rules import FixedProcesses
+from gridengine.parallel_environments import ParallelEnvironment
+from gridengine.qbin import QBin, check_output
+from gridengine.queue import GridEngineQueue
 
 
 def new_driver(
@@ -70,7 +61,7 @@ class GridEngineDriver:
             if node.hostname:
                 wc_queue_list_expr = "*@{}".format(node.hostname)
                 try:
-                    check_output([QMOD_PATH, "-d", wc_queue_list_expr], stderr=STDOUT)
+                    self.ge_env.qbin.qmod(["-d", wc_queue_list_expr])
                     to_shutdown.append(node)
                 except CalledProcessError as e:
                     msg = "invalid queue"
@@ -90,7 +81,9 @@ class GridEngineDriver:
         return to_shutdown
 
     def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
-        return _get_jobs_and_nodes(self.autoscale_config, self.ge_env.queues)
+        return _get_jobs_and_nodes(
+            self.autoscale_config, self.ge_env.qbin, self.ge_env.queues
+        )
 
     def handle_post_delete(self, nodes_to_delete: List[Node]) -> None:
         if self.read_only:
@@ -98,24 +91,21 @@ class GridEngineDriver:
 
         logging.getLogger("gridengine.driver").info("handle_post_delete")
 
-        fqdns = check_output([QCONF_PATH, "-sh"]).decode().lower().split()
+        fqdns = self.ge_env.qbin.qconf(["-sh"]).lower().split()
         admin_hosts = [n.split(".")[0] for n in fqdns]
 
-        fqdns = check_output([QCONF_PATH, "-ss"]).decode().lower().split()
+        fqdns = self.ge_env.qbin.qconf(["-ss"]).lower().split()
         submit_hosts = [n.split(".")[0] for n in fqdns]
 
-        fqdns = check_output([QCONF_PATH, "-sel"]).decode().lower().split()
+        fqdns = self.ge_env.qbin.qconf(["-sel"]).lower().split()
         exec_hosts = [n.split(".")[0] for n in fqdns]
 
-        hostlists = check_output([QCONF_PATH, "-shgrpl"]).decode().lower().split()
+        hostlists = self.ge_env.qbin.qconf(["-shgrpl"]).lower().split()
 
         by_hostlist: Dict[str, List[str]] = {}
         for hostlist in hostlists:
             fqdns = (
-                check_output([QCONF_PATH, "-shgrp_resolved", hostlist])
-                .decode()
-                .lower()
-                .split()
+                self.ge_env.qbin.qconf(["-shgrp_resolved", hostlist]).lower().split()
             )
             by_hostlist[hostlist] = [n.split(".")[0] for n in fqdns]
 
@@ -133,15 +123,15 @@ class GridEngineDriver:
                 # we can't remove the node
                 for hostlist_name, hosts in by_hostlist.items():
                     if hostname in hosts:
-                        call(
+                        self.ge_env.qbin.qconf(
                             [
-                                QCONF_PATH,
                                 "-dattr",
                                 "hostgroup",
                                 "hostlist",
                                 node.hostname,
                                 hostlist_name,
-                            ]
+                            ],
+                            check=False,
                         )
 
                 for qname in self.ge_env.queues:
@@ -158,13 +148,13 @@ class GridEngineDriver:
         try:
             for host_to_delete in hostnames_to_delete:
                 if host_to_delete in admin_hosts:
-                    call([QCONF_PATH, "-dh", host_to_delete])
+                    self.ge_env.qbin.qconf(["-dh", host_to_delete], check=False)
 
                 if host_to_delete in submit_hosts:
-                    call([QCONF_PATH, "-ds", host_to_delete])
+                    self.ge_env.qbin.qconf(["-ds", host_to_delete], check=False)
 
                 if host_to_delete in exec_hosts:
-                    call([QCONF_PATH, "-de", host_to_delete])
+                    self.ge_env.qbin.qconf(["-de", host_to_delete], check=False)
 
         except CalledProcessError as e:
             logging.warning(str(e))
@@ -182,7 +172,7 @@ class GridEngineDriver:
             if node.hostname:
                 wc_queue_list_expr = "*@{}".format(node.hostname)
                 try:
-                    check_call([QMOD_PATH, "-e", wc_queue_list_expr])
+                    self.ge_env.qbin.qmod(["-e", wc_queue_list_expr])
                     undrained.append(node)
                 except CalledProcessError as e:
                     logging.error(
@@ -212,8 +202,8 @@ class GridEngineDriver:
             "Purging slots definition for host=%s queue=%s", hostname, queue.qname
         )
 
-        check_call(
-            [QCONF_PATH, "-purge", "queue", "slots", queue_host,]  # noqa: ignore=E231
+        self.ge_env.qbin.qconf(
+            ["-purge", "queue", "slots", queue_host,]  # noqa: ignore=E231
         )
 
         queue.slots.pop(hostname)
@@ -221,10 +211,7 @@ class GridEngineDriver:
     def _get_hostlist(self, hostgroup: str) -> List[str]:
         if hostgroup not in self._hostgroup_cache:
             fqdns = (
-                check_output([QCONF_PATH, "-shgrp_resolved", hostgroup])
-                .decode()
-                .lower()
-                .split()
+                self.ge_env.qbin.qconf(["-shgrp_resolved", hostgroup]).lower().split()
             )
             self._hostgroup_cache[hostgroup] = [fqdn.split(".")[0] for fqdn in fqdns]
         return self._hostgroup_cache[hostgroup]
@@ -283,10 +270,10 @@ class GridEngineDriver:
             return []
 
         ret: List[Node] = []
-        fqdns = check_output([QCONF_PATH, "-sh"]).decode().splitlines()
+        fqdns = self.ge_env.qbin.qconf(["-sh"]).splitlines()
         admin_hostnames = [fqdn.split(".")[0] for fqdn in fqdns]
 
-        fqdns = check_output([QCONF_PATH, "-ss"]).decode().splitlines()
+        fqdns = self.ge_env.qbin.qconf(["-ss"]).splitlines()
         submit_hostnames = [fqdn.split(".")[0] for fqdn in fqdns]
 
         for node in nodes:
@@ -327,12 +314,12 @@ class GridEngineDriver:
                 return False
             self._add_to_hostgroups(node, hostgroups_expr)
             # finally enable it
-            check_call([QMOD_PATH, "-e", "*@" + node.hostname])
+            self.ge_env.qbin.qmod(["-e", "*@" + node.hostname])
 
         except CalledProcessError as e:
             logging.warn("Could not add %s to cluster: %s", node, str(e))
             try:
-                check_output([QMOD_PATH, "-d", "*@" + node.hostname], stderr=STDOUT)
+                self.ge_env.qbin.qmod(["-d", "*@" + node.hostname])
             except CalledProcessError as e2:
                 logging.exception(e2.stdout)
             return False
@@ -484,9 +471,8 @@ license_oversubscription NONE""".format(
 
         for qname in ["all.q", ge_qname]:
             logging.debug("Adding slots for %s to queue %s", node.hostname, qname)
-            check_call(
+            self.ge_env.qbin.qconf(
                 [
-                    QCONF_PATH,
                     "-mattr",
                     "queue",
                     "slots",
@@ -508,10 +494,10 @@ license_oversubscription NONE""".format(
             with open(tempp, "w") as tempf:
                 tempf.write(host_template)
             try:
-                check_output([QCONF_PATH, "-Ae", tempp], stderr=STDOUT)
+                self.ge_env.qbin.qconf(["-Ae", tempp])
             except CalledProcessError as e:
                 if "already exists" in e.stdout.decode():
-                    check_call([QCONF_PATH, "-Me", tempp])
+                    self.ge_env.qbin.qconf(["-Me", tempp])
                 else:
                     raise
         except Exception:
@@ -522,8 +508,8 @@ license_oversubscription NONE""".format(
                     pass
             raise
 
-        check_call([QCONF_PATH, "-as", node.hostname])
-        check_call([QCONF_PATH, "-ah", node.hostname])
+        self.ge_env.qbin.qconf(["-as", node.hostname])
+        self.ge_env.qbin.qconf(["-ah", node.hostname])
 
     def _add_to_hostgroups(self, node: Node, hostgroups_expr: str) -> None:
         # TODO assert these are @hostgroups
@@ -543,15 +529,14 @@ license_oversubscription NONE""".format(
 
             logging.info("Adding hostname %s to hostgroup %s", node.hostname, hostgroup)
 
-            check_call(
+            self.ge_env.qbin.qconf(
                 [
-                    QCONF_PATH,
                     "-aattr",
                     "hostgroup",
                     "hostlist",
                     node.hostname,
                     hostgroup,
-                ]
+                ]  # noqa: ignore=E231
             )
 
     def clean_hosts(self, invalid_nodes: List[SchedulerNode]) -> None:
@@ -710,7 +695,7 @@ def _getr(e: Any, attr_name: str) -> str:
 
 
 def _get_jobs_and_nodes(
-    autoscale_config: Dict, ge_queues: Dict[str, GridEngineQueue],
+    autoscale_config: Dict, qbin: QBin, ge_queues: Dict[str, GridEngineQueue],
 ) -> Tuple[List[Job], List[SchedulerNode]]:
     # some magic here for the args
     # -g d -- show all the tasks, do not group
@@ -719,34 +704,28 @@ def _get_jobs_and_nodes(
     # -f -- full output. Ambiguous what this means, but in this case it includes host information so that
     # we can get one consistent view (i.e. not split between two calls, introducing a race condition)
     # qstat -xml -s pr -r -f -F
-    cmd = [QSTAT_PATH, "-xml", "-s", "prs", "-r", "-f", "-F"]
+    cmd = ["-xml", "-s", "prs", "-r", "-f", "-F"]
     relevant_complexes = (
         autoscale_config.get("gridengine", {}).get("relevant_complexes") or []
     )
     if relevant_complexes:
         cmd.append(" ".join(relevant_complexes))
     logging.debug("Query jobs and nodes with cmd '%s'", " ".join(cmd))
-    raw_xml = check_output(cmd).decode()
+    raw_xml = qbin.qstat(cmd)
     raw_xml_file = six.StringIO(raw_xml)
     doc = ElementTree.parse(raw_xml_file)
     root = doc.getroot()
 
-    nodes, running_jobs = _parse_scheduler_nodes(root, ge_queues)
+    nodes, running_jobs = _parse_scheduler_nodes(root, qbin, ge_queues)
     pending_jobs = _parse_jobs(root, ge_queues)
-    # by_job_id = partition(pending_jobs, lambda j: j.name)
-    # for rjob in running_jobs:
-    #     if rjob.name in by_job_id:
-    #         idle_job = by_job_id[rjob.name]
-    #         idle_job.iterations_remaining -= rjob.iterations
-    #     by_job_id.pop(rjob.name, {})
     return pending_jobs, nodes
 
 
 def _parse_scheduler_nodes(
-    root: Element, ge_queues: Dict[str, GridEngineQueue]
+    root: Element, qbin: QBin, ge_queues: Dict[str, GridEngineQueue]
 ) -> Tuple[List[SchedulerNode], List[Job]]:
     running_jobs: Dict[str, Job] = {}
-    schedulers = check_output([QCONF_PATH, "-sss"]).decode().splitlines()
+    schedulers = qbin.qconf(["-sss"]).splitlines()
 
     compute_nodes: Dict[str, SchedulerNode] = {}
 
@@ -820,8 +799,8 @@ def _parse_scheduler_nodes(
                     )
                     log_warnings.add(resource_name)
             else:
-                resources[resource_name] = complex.parse(text)
-                resources[complex.shortcut] = resources[resource_name]
+                resources[complex.name] = complex.parse(text)
+                resources[complex.shortcut] = resources[complex.name]
 
         compute_node = SchedulerNode(hostname, resources)
 
@@ -881,7 +860,7 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
     job_state = _get(jijle, "state")
 
     # linters yell at this (which is good!) but set("abc") == set(["a", "b", "c"])
-    if IGNORE_STATES.intersection(set(job_state)):  # type: ignore
+    if job_state and IGNORE_STATES.intersection(set(job_state)):  # type: ignore
         return None
 
     requested_queues = [str(x.text) for x in jijle.findall("hard_req_queue")]
@@ -910,6 +889,9 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
         return None
 
     ge_queue: GridEngineQueue = ge_queues[qname]
+
+    if not ge_queue.autoscale_enabled:
+        return None
 
     num_tasks = 1
     tasks_expr = _get(jijle, "tasks")
@@ -943,23 +925,24 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
             req_value = complex.parse(req.text)
 
         if complex:
-            if complex.shortcut != complex.name and complex.relop != "EXCL":
-                # always use the full name as the resource name. The shortcut
-                # will be included below
-                if resource_name == complex.shortcut:
-                    resource_name = complex.shortcut
+            # if complex.shortcut != complex.name and complex.relop != "EXCL":
+            #     # always use the full name as the resource name. The shortcut
+            #     # will be included below
+            #     if resource_name == complex.shortcut:
+            #         resource_name = complex.shortcut
 
             if complex.name == "slots":
                 # ensure we don't double count slots if someone specifies it
                 constraints[0]["slots"] = req_value
             else:
-                constraints.append({resource_name: req_value})
-                if complex.shortcut != complex.name:
+                constraints.append({complex.name: req_value})
+                if complex.shortcut != complex.name and complex.relop != "EXCL":
                     # add in the shortcut as well
                     constraints.append({complex.shortcut: req_value})
+            job_resources[complex.name] = req_value
         else:
             constraints.append({resource_name: req_value})
-        job_resources[resource_name] = req_value
+            job_resources[resource_name] = req_value
 
     jobs: List[Job]
 
@@ -1049,6 +1032,7 @@ def _pe_job(
         alloc_rule: FixedProcesses = pe.allocation_rule  # type: ignore
         constraints[0]["slots"] = alloc_rule.fixed_processes
         num_nodes = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
+        constraints.append({"exclusive_task": True})
 
         def job_constructor(job_id: str) -> Job:
             return Job(

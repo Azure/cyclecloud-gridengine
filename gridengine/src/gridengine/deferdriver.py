@@ -10,7 +10,7 @@ from hpc.autoscale.util import partition_single
 
 from gridengine.driver import GridEngineDriver
 from gridengine.environment import GridEngineEnvironment
-from gridengine.util import check_output
+from gridengine.qbin import check_output
 
 
 class DeferredDriver(GridEngineDriver):

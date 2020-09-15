@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import typing
 from argparse import ArgumentParser
 from typing import Any, Dict, List, Optional
 
@@ -16,8 +17,10 @@ from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import SingletonLock
 
 from gridengine import environment as envlib
-from gridengine.driver import GridEngineDriver
 from gridengine.environment import GridEngineEnvironment
+
+if typing.TYPE_CHECKING:
+    from gridengine.driver import GridEngineDriver
 
 _exit_code = 0
 
@@ -25,7 +28,7 @@ _exit_code = 0
 def autoscale_grid_engine(
     config: Dict[str, Any],
     ge_env: Optional[GridEngineEnvironment] = None,
-    ge_driver: Optional[GridEngineDriver] = None,
+    ge_driver: Optional["GridEngineDriver"] = None,
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
     dry_run: bool = False,
@@ -147,7 +150,7 @@ def autoscale_grid_engine(
 def new_demand_calculator(
     config: Dict,
     ge_env: Optional[GridEngineEnvironment] = None,
-    ge_driver: Optional[GridEngineDriver] = None,
+    ge_driver: Optional["GridEngineDriver"] = None,
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
     singleton_lock: Optional[SingletonLock] = None,
@@ -184,7 +187,7 @@ def new_demand_calculator(
 def calculate_demand(
     config: Dict,
     ge_env: GridEngineEnvironment,
-    ge_driver: GridEngineDriver,
+    ge_driver: "GridEngineDriver",
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
 ) -> DemandCalculator:
@@ -286,7 +289,7 @@ def print_demand(
     return demand_result
 
 
-def new_driver(config: Dict, ge_env: GridEngineEnvironment) -> GridEngineDriver:
+def new_driver(config: Dict, ge_env: GridEngineEnvironment) -> "GridEngineDriver":
     import importlib
 
     ge_config = config.get("gridengine", {})

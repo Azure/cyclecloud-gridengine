@@ -3,12 +3,13 @@ from typing import Dict, List, Optional
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.node.node import Node
 
-from gridengine import parallel_environments as pelib
+from gridengine.complex import Complex, read_complexes
 from gridengine.parallel_environments import (
-    Complex,
-    GridEngineQueue,
     ParallelEnvironment,
+    read_parallel_environments,
 )
+from gridengine.qbin import QBin, QBinImpl
+from gridengine.queue import GridEngineQueue, read_queue_configs
 
 
 class GridEngineEnvironment:
@@ -19,12 +20,14 @@ class GridEngineEnvironment:
         queues: Optional[Dict[str, GridEngineQueue]] = None,
         pes: Optional[Dict[str, ParallelEnvironment]] = None,
         complexes: Optional[Dict[str, Complex]] = None,
+        qbin: Optional[QBin] = None,
     ) -> None:
         self.__jobs: List[Job] = jobs or []
         self.__nodes: List[Node] = nodes or []
         self.__queues: Dict[str, GridEngineQueue] = queues or {}
         self.__pes: Dict[str, ParallelEnvironment] = pes or {}
         self.__complexes: Dict[str, Complex] = complexes or {}
+        self.__qbin = qbin or QBinImpl()
 
     @property
     def jobs(self) -> List[Job]:
@@ -50,6 +53,10 @@ class GridEngineEnvironment:
     @property
     def queues(self) -> Dict[str, GridEngineQueue]:
         return self.__queues
+
+    @property
+    def qbin(self) -> QBin:
+        return self.__qbin
 
     def add_queue(self, gequeue: GridEngineQueue) -> None:
         assert gequeue
@@ -80,15 +87,19 @@ class GridEngineEnvironment:
         self.__complexes[complex.shortcut] = complex
 
 
-def from_qconf(autoscale_config: Dict) -> GridEngineEnvironment:
+def from_qconf(
+    autoscale_config: Dict, qbin: Optional[QBin] = None
+) -> GridEngineEnvironment:
     from gridengine import driver
 
-    pes = pelib.read_parallel_environments(autoscale_config)
-    complexes = pelib.read_complexes(autoscale_config)
+    qbin = qbin or QBinImpl()
+
+    pes = read_parallel_environments(autoscale_config, qbin)
+    complexes = read_complexes(autoscale_config, qbin)
     ge_env = GridEngineEnvironment([], [], {}, pes, complexes)
 
-    pelib.read_queue_configs(autoscale_config, ge_env)
-    jobs, nodes = driver._get_jobs_and_nodes(autoscale_config, ge_env.queues)
+    read_queue_configs(autoscale_config, ge_env)
+    jobs, nodes = driver._get_jobs_and_nodes(autoscale_config, qbin, ge_env.queues)
     ge_env.jobs.extend(jobs)
     ge_env.nodes.extend(nodes)
     return ge_env

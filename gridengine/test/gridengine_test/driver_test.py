@@ -4,12 +4,10 @@ from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node import constraints
 
 from gridengine import driver
-from gridengine.parallel_environments import (
-    AllocationRule,
-    Complex,
-    new_gridenging_queue,
-    new_parallel_environment,
-)
+from gridengine.allocation_rules import AllocationRule
+from gridengine.complex import Complex
+from gridengine.parallel_environments import new_parallel_environment
+from gridengine.queue import new_gequeue
 
 
 def test_custom_parser() -> None:
@@ -88,7 +86,7 @@ def test_preprocess_configs() -> None:
     }
     complexes = {"slots": Complex("slots", "s", "int", "<=", True, True, "", 0)}
     gequeues = {
-        "hpc.q": new_gridenging_queue(
+        "hpc.q": new_gequeue(
             "hpc.q",
             "@hpc",
             ["mpi", "smp", "single"],
