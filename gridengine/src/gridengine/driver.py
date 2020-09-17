@@ -28,16 +28,22 @@ from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
 from gridengine import environment as envlib
 from gridengine import validate as validatelib
 from gridengine.allocation_rules import FixedProcesses
+from gridengine.complex import Complex
+from gridengine.environment import GridEngineEnvironment
+from gridengine.hostgroup import BoundHostgroup
 from gridengine.parallel_environments import ParallelEnvironment
-from gridengine.qbin import QBin, check_output
+from gridengine.qbin import check_output
 from gridengine.queue import GridEngineQueue
-from gridengine.util import get_node_hostgroups, get_node_qname
+from gridengine.util import add_node_to_hostgroup, get_node_hostgroups
 
 
 def new_driver(
     autoscale_config: Dict, ge_env: envlib.GridEngineEnvironment,
 ) -> "GridEngineDriver":
     return GridEngineDriver(autoscale_config, ge_env)
+
+
+# TODO RDH logging
 
 
 class GridEngineDriver:
@@ -260,10 +266,7 @@ class GridEngineDriver:
         if self.read_only:
             return []
 
-        hostnames = ",".join([n.hostname or "tbd" for n in nodes])
-        logging.getLogger("gridengine.driver").info(
-            "add_nodes_to_cluster %s", hostnames
-        )
+        logging.getLogger("gridengine.driver").info("add_nodes_to_cluster")
 
         if not nodes:
             return []
@@ -292,10 +295,10 @@ class GridEngineDriver:
             )
             return False
 
-        hostgroups_expr = self._get_hostgroups_expr(node)
-        if not hostgroups_expr:
+        hostgroups = get_node_hostgroups(node)
+        if not hostgroups:
             logging.fine(
-                "No hostgroups_expr was found for %s. Can not add to cluster.", node
+                "No hostgroups were found for %s. Can not add to cluster.", node
             )
             return False
 
@@ -309,9 +312,9 @@ class GridEngineDriver:
 
             self.add_exec_host(node)
             if not self._add_slots(node):
-                logging.fine("Adding slots to queues failed for node %s", node)
+                logging.fine("Adding slots to queues failed for %s", node)
                 return False
-            self._add_to_hostgroups(node, hostgroups_expr)
+            self._add_to_hostgroups(node, hostgroups)
             # finally enable it
             self.ge_env.qbin.qmod(["-e", "*@" + node.hostname])
 
@@ -333,7 +336,7 @@ class GridEngineDriver:
                 return False
 
         if node.state == "Failed":
-            logging.warning("Ignoring failed node %s", node)
+            logging.warning("Ignoring failed %s", node)
             return False
 
         if not node.exists:
@@ -346,18 +349,6 @@ class GridEngineDriver:
             )
             return False
         return True
-
-    def _get_hostgroups_expr(self, node: Node) -> Optional[str]:
-        hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
-
-        if not hostgroups_expr:
-            logging.warning(
-                "No hostgroups found for node %s - %s",
-                node,
-                node.software_configuration,
-            )
-            return None
-        return hostgroups_expr
 
     def _validate_reverse_dns(self, node: Node) -> bool:
         # let's make sure the hostname is valid and reverse
@@ -379,7 +370,7 @@ class GridEngineDriver:
 
         if node.private_ip not in addr_info_ips:
             logging.warning(
-                "Node %s has a hostname that does not match the"
+                "%s has a hostname that does not match the"
                 + " private_ip (%s) reported by cyclecloud (%s)! Skipping",
                 node,
                 addr_info_ips,
@@ -390,7 +381,7 @@ class GridEngineDriver:
         addr_info_hostname = addr_info[0].split(".")[0]
         if addr_info_hostname.lower() != node.hostname.lower():
             logging.warning(
-                "Node %s has a hostname that can not be queried via reverse"
+                "%s has a hostname that can not be queried via reverse"
                 + " dns (private_ip=%s cyclecloud hostname=%s reverse dns hostname=%s)."
                 + " This is common and usually repairs itself. Skipping",
                 node,
@@ -431,9 +422,15 @@ class GridEngineDriver:
                 continue
 
             if not res_value:
-                logging.warning("Ignoring blank complex %s for %s", res_name, node)
+                logging.fine("Ignoring blank complex %s for %s", res_name, node)
+                continue
 
             complex = self.ge_env.complexes[res_name]
+
+            if complex.complex_type in ["TIME"]:
+                logging.fine("Ignoring TIME complex %s for %s", res_name, node)
+                continue
+
             if complex.name != complex.shortcut and res_name == complex.shortcut:
                 # this is just a duplicate of the long form
                 continue
@@ -460,17 +457,14 @@ license_oversubscription NONE""".format(
         )
 
     def _add_slots(self, node: Node) -> bool:
-        ge_qname = node.metadata.get(
-            "gridengine_qname", node.software_configuration.get("gridengine_qname", "")
-        )
-        if not ge_qname:
-            logging.warning(
-                "gridengine_qname is not set on %s so it can not join the cluster. Ignoring",
-                node,
-            )
-            return False
+        queues = []
 
-        for qname in ["all.q", ge_qname]:
+        for hostgroup in get_node_hostgroups(node):
+            for queue in self.ge_env.queues.values():
+                if hostgroup in queue.hostlist:
+                    queues.append(queue.qname)
+
+        for qname in queues:
             logging.debug("Adding slots for %s to queue %s", node.hostname, qname)
             self.ge_env.qbin.qconf(
                 [
@@ -512,10 +506,7 @@ license_oversubscription NONE""".format(
         self.ge_env.qbin.qconf(["-as", node.hostname])
         self.ge_env.qbin.qconf(["-ah", node.hostname])
 
-    def _add_to_hostgroups(self, node: Node, hostgroups_expr: str) -> None:
-        # TODO assert these are @hostgroups
-        hostgroups = hostgroups_expr.split(" ")
-
+    def _add_to_hostgroups(self, node: Node, hostgroups: List[str]) -> None:
         for hostgroup in hostgroups:
             if not node.hostname:
                 continue
@@ -698,8 +689,8 @@ def _get_jobs_and_nodes(
     # -s  pr -- show only pending or running
     # -f -- full output. Ambiguous what this means, but in this case it includes host information so that
     # we can get one consistent view (i.e. not split between two calls, introducing a race condition)
-    # qstat -xml -s pr -r -f -F
-    cmd = ["-xml", "-s", "prs", "-r", "-f", "-F"]
+    # qstat -xml -s prs -r -f -ext -F
+    cmd = ["-xml", "-s", "prs", "-r", "-f", "-ext", "-F"]
     relevant_complexes = (
         autoscale_config.get("gridengine", {}).get("relevant_complexes") or []
     )
@@ -712,7 +703,7 @@ def _get_jobs_and_nodes(
     root = doc.getroot()
 
     nodes, running_jobs = _parse_scheduler_nodes(root, ge_env)
-    pending_jobs = _parse_jobs(root, ge_env.queues)
+    pending_jobs = _parse_jobs(root, ge_env)
     return pending_jobs, nodes
 
 
@@ -756,7 +747,7 @@ def _parse_scheduler_nodes(
 
         if hostname in compute_nodes:
             compute_node = compute_nodes[hostname]
-            _assign_jobs(compute_node, qiqle, running_jobs, ge_queues)
+            _assign_jobs(compute_node, qiqle, running_jobs, ge_env)
             continue
 
         slots_total = int(_getr(qiqle, "slots_total"))
@@ -766,10 +757,10 @@ def _parse_scheduler_nodes(
             continue
 
         resources: dict = {"slots": slots_total}
-        if "slots" in ge_queue.complexes:
-            resources[ge_queue.complexes["slots"].shortcut] = slots_total
+        if "slots" in ge_env.complexes:
+            resources[ge_env.complexes["slots"].shortcut] = slots_total
 
-        for name, default_complex in ge_queue.complexes.items():
+        for name, default_complex in ge_env.complexes.items():
 
             if name == "slots":
                 continue
@@ -784,10 +775,26 @@ def _parse_scheduler_nodes(
 
         for res in qiqle.iter("resource"):
             resource_name = res.attrib["name"]
-            complex = ge_queue.complexes.get(resource_name)
+            complex = ge_env.complexes.get(resource_name)
             text = res.text or "NONE"
 
+            # we currently won't do anything with any TIME complex type
+            def filter_if_time(c: Complex) -> bool:
+
+                if c.complex_type in ["TIME"]:
+                    if resource_name not in log_warnings:
+                        logging.warning(
+                            "Ignoring TIME resource %s on job %s", resource_name
+                        )
+                    log_warnings.add(resource_name)
+                    return True
+                return False
+
             if complex is None:
+                unfiltered_complex = ge_env.unfiltered_complexes.get(resource_name)
+                if unfiltered_complex and filter_if_time(unfiltered_complex):
+                    continue
+
                 resources[resource_name] = text
                 if resource_name not in log_warnings:
                     logging.warning(
@@ -797,6 +804,10 @@ def _parse_scheduler_nodes(
                     )
                     log_warnings.add(resource_name)
             else:
+
+                if filter_if_time(complex):
+                    continue
+
                 resources[complex.name] = complex.parse(text)
                 resources[complex.shortcut] = resources[complex.name]
 
@@ -811,13 +822,11 @@ def _parse_scheduler_nodes(
             + int(_getr(qiqle, "slots_resv"))
         )  # TODO resv?
 
-        if "slots" in ge_queue.complexes:
-            s = ge_queue.complexes["slots"].shortcut
+        if "slots" in ge_env.complexes:
+            s = ge_env.complexes["slots"].shortcut
             compute_node.available[s] = compute_node.available["slots"]
 
-        _assign_jobs(compute_node, qiqle, running_jobs, ge_queues)
-
-        compute_node.metadata["gridengine_qname"] = queue_name
+        _assign_jobs(compute_node, qiqle, running_jobs, ge_env)
 
         compute_node.metadata["gridengine_hostgroups"] = ",".join(
             ge_env.host_memberships.get(
@@ -833,11 +842,11 @@ def _assign_jobs(
     compute_node: SchedulerNode,
     e: Element,
     running_jobs: Dict[str, Job],
-    ge_queues: Dict[str, GridEngineQueue],
+    ge_env: GridEngineEnvironment,
 ) -> None:
     # use assign_job so we just accept that this job is running on this node.
     for jle in e.findall("job_list"):
-        parsed_running_jobs = _parse_job(jle, ge_queues) or []
+        parsed_running_jobs = _parse_job(jle, ge_env) or []
         for running_job in parsed_running_jobs:
             if not running_jobs.get(running_job.name):
                 running_jobs[running_job.name] = running_job
@@ -847,11 +856,12 @@ def _assign_jobs(
         compute_node.assign(_getr(jle, "JB_job_number"))
 
 
-def _parse_jobs(root: Element, ge_queues: Dict[str, GridEngineQueue]) -> List[Job]:
+def _parse_jobs(root: Element, ge_env: GridEngineEnvironment) -> List[Job]:
+    assert isinstance(ge_env, GridEngineEnvironment)
     autoscale_jobs: List[Job] = []
 
     for jijle in root.findall("job_info/job_list"):
-        jobs = _parse_job(jijle, ge_queues)
+        jobs = _parse_job(jijle, ge_env)
         if jobs:
             autoscale_jobs.extend(jobs)
 
@@ -861,7 +871,11 @@ def _parse_jobs(root: Element, ge_queues: Dict[str, GridEngineQueue]) -> List[Jo
 IGNORE_STATES = set("hEe")
 
 
-def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optional[Job]:
+def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
+    assert isinstance(ge_env, GridEngineEnvironment)
+
+    ge_queues: Dict[str, GridEngineQueue] = ge_env.queues
+
     job_state = _get(jijle, "state")
 
     # linters yell at this (which is good!) but set("abc") == set(["a", "b", "c"])
@@ -873,6 +887,10 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
     if not requested_queues:
         requested_queues = ["all.q"]
 
+    requested_queues = [
+        x for x in requested_queues if ge_env.queues[x].autoscale_enabled
+    ]
+
     log_warnings: Set[str] = set()
 
     job_id = _getr(jijle, "JB_job_number")
@@ -881,8 +899,10 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
     if len(requested_queues) != 1 or ("*" in requested_queues[0]):
         logging.error(
             "We support submitting to at least one and only one queue."
-            + " Wildcards are also not supported."
+            + " Wildcards are also not supported. If you meant to disable all but one of these queues"
+            + ' for autoscale, change {"gridengine": {"queues": {"%s": {"autoscale_enabled": false}}}}'
             + " Ignoring job %s submitted to %s.",
+            "|".join(requested_queues),
             job_id,
             requested_queues,
         )
@@ -904,9 +924,11 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
     if tasks_expr:
         num_tasks = _parse_tasks(tasks_expr)
 
-    constraints: List[Dict] = [{"slots": slots}] + ge_queue.constraints
+    constraints: List[Dict] = [{"slots": slots}]
 
-    job_resources: Dict[str, str] = {}
+    job_resources: Dict[str, Any] = {}
+    project = _get(jijle, "JB_project")
+    owner = _get(jijle, "JB_owner")
 
     for req in jijle.iter("hard_request"):
         if req.text is None:
@@ -915,17 +937,30 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
             )
             continue
 
+        # we currently won't do anything with any TIME complex type
+        def filter_if_time(c: Complex) -> bool:
+            if c.complex_type in ["TIME"]:
+                if resource_name not in log_warnings:
+                    logging.warning("Ignoring TIME resource %s", resource_name)
+                log_warnings.add(resource_name)
+                return True
+            return False
+
         resource_name = req.attrib["name"]
-        complex = ge_queue.complexes.get(resource_name)
+        complex = ge_env.complexes.get(resource_name)
         if not complex:
+            unfiltered_complex = ge_env.unfiltered_complexes.get("resource_name")
+            if unfiltered_complex and filter_if_time(unfiltered_complex):
+                continue
+
             if resource_name not in log_warnings:
                 logging.warning(
-                    "Unknown resource %s. This will be treated as a string internally and "
+                    "Unknown resource %s. This will be ignored for autoscaling purposes and "
                     + "may cause issues with grid engine's ability to schedule this job.",
                     resource_name,
                 )
                 log_warnings.add(resource_name)
-            req_value: Any = req.text
+            continue
         else:
             req_value = complex.parse(req.text)
 
@@ -935,6 +970,8 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
             #     # will be included below
             #     if resource_name == complex.shortcut:
             #         resource_name = complex.shortcut
+            if filter_if_time(complex):
+                continue
 
             if complex.name == "slots":
                 # ensure we don't double count slots if someone specifies it
@@ -954,20 +991,49 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
     pe_elem = jijle.find("requested_pe")
     if pe_elem is not None:
         # dealing with parallel jobs (qsub -pe ) is much more complicated
-        pe_jobs = _pe_job(ge_queue, pe_elem, job_id, constraints, slots, num_tasks)
+        pe_jobs = _pe_job(
+            ge_env,
+            ge_queue,
+            pe_elem,
+            job_id,
+            constraints,
+            slots,
+            num_tasks,
+            owner,
+            project,
+        )
         if pe_jobs is None:
             return None
         else:
             jobs = pe_jobs
     else:
-        hostgroups = ge_queue.get_hostgroups_for_ht()
-        if not hostgroups:
+        hostgroup_names = ge_queue.get_hostgroups_for_ht()
+
+        if not hostgroup_names:
             validatelib.validate_ht_hostgroup(ge_queue, logging.warning)
             logging.error("No hostgroup for job %s. See warnings above.", job_id)
             return None
-        constraints.append(
-            QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, None)
-        )
+
+        queue_and_hostgroup_constraints = []
+        for hg_name in hostgroup_names:
+            hostgroup = ge_queue.bound_hostgroups.get(hg_name)
+
+            if not hostgroup:
+                raise AssertionError(
+                    "{} not defined in {}".format(
+                        hg_name, list(ge_env.hostgroups.keys())
+                    )
+                )
+
+            queue_and_hostgroup_constraints.append(
+                HostgroupConstraint(hostgroup, None, owner, project)
+            )
+
+        if len(queue_and_hostgroup_constraints) > 1:
+            constraints.append(XOr(*queue_and_hostgroup_constraints))
+        else:
+            constraints.append(queue_and_hostgroup_constraints[0])
+
         jobs = [Job(job_id, constraints, iterations=num_tasks)]
 
     for job in jobs:
@@ -981,12 +1047,15 @@ def _parse_job(jijle: Element, ge_queues: Dict[str, GridEngineQueue]) -> Optiona
 
 
 def _pe_job(
+    ge_env: GridEngineEnvironment,
     ge_queue: GridEngineQueue,
     pe_elem: Element,
     job_id: str,
     constraints: List[Dict],
     slots: int,
     num_tasks: int,
+    owner: Optional[str],
+    project: Optional[str],
 ) -> Optional[List[Job]]:
     pe_name_expr = pe_elem.attrib["name"]
     array_size = num_tasks
@@ -1013,17 +1082,32 @@ def _pe_job(
         return None
 
     pes: List[ParallelEnvironment] = ge_queue.get_pes(pe_name_expr)
+
+    if not pes:
+        logging.error(
+            "Could not find a matching pe for '%s' and queue %s",
+            pe_name_expr,
+            ge_queue.qname,
+        )
+        return None
+
     queue_and_hostgroup_constraints = []
     for pe in pes:
         hostgroups = ge_queue.get_hostgroups_for_pe(pe.name)
+
         pe_count = int(pe_elem.text)
 
         # optional - can  be None if this is an htc style bucket.
         placement_group = ge_queue.get_placement_group(pe.name)
 
-        queue_and_hostgroup_constraints.append(
-            QueueAndHostgroupConstraint(ge_queue.qname, hostgroups, placement_group)
-        )
+        for hg_name in hostgroups:
+            hostgroup = ge_queue.bound_hostgroups[hg_name]
+
+            queue_and_hostgroup_constraints.append(
+                HostgroupConstraint(hostgroup, placement_group, owner, project)
+            )
+
+    pe = pes[0]
 
     if len(queue_and_hostgroup_constraints) > 1:
         constraints.append(XOr(*queue_and_hostgroup_constraints))
@@ -1041,7 +1125,11 @@ def _pe_job(
 
         def job_constructor(job_id: str) -> Job:
             return Job(
-                job_id, constraints, iterations=1, node_count=num_nodes, colocated=True
+                job_id,
+                constraints,
+                node_count=num_nodes,
+                colocated=True,
+                packing_strategy="scatter",
             )
 
     elif pe.allocation_rule.name == "$pe_slots":
@@ -1084,23 +1172,21 @@ def _pe_job(
 #                       @roundrobin1 @roundrobin2 @fixed0 @fixed1 @fixed2
 
 
-class QueueAndHostgroupConstraint(BaseNodeConstraint):
+class HostgroupConstraint(BaseNodeConstraint):
     def __init__(
         self,
-        qname: str,
-        hostgroups: List[str],
+        hostgroup: BoundHostgroup,
         placement_group: Optional[ht.PlacementGroup],
+        user: Optional[str] = None,
+        project: Optional[str] = None,
     ) -> None:
-        # assert len(hostgroups) == 1, hostgroups  # RDH remove
-        self.qname = qname
-        assert self.qname
-        self.hostgroups_set = set(hostgroups)
-        self.hostgroups_sorted = sorted(hostgroups)
-        assert hostgroups, "Must specify at least one hostgroup"
+        self.hostgroup = hostgroup
         self.placement_group = placement_group
+        self.user = user
+        self.project = project
+        self.child_constraint = self.hostgroup.make_constraint(user, project)
 
     def satisfied_by_node(self, node: Node) -> SatisfiedResult:
-
         if self.placement_group:
             if node.placement_group != self.placement_group:
 
@@ -1126,55 +1212,34 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 ],
             )
 
-        node_qname = get_node_qname(node)
-
-        # nodes that don't exist are not in a queue, by definition
-        if not node_qname and not node.exists:
-            node_qname = self.qname
-
-        if node_qname != self.qname:
-            return SatisfiedResult(
-                "WrongQueue",
-                self,
-                node,
-                reasons=[
-                    "{} is in a different queue: {} != {}".format(
-                        node, node_qname, self.qname
-                    )
-                ],
-            )
-
-        node_hostgroups: Set[str] = set(get_node_hostgroups(node))
+        node_hostgroups: List[str] = get_node_hostgroups(node)
 
         if not node_hostgroups:
-            node_hostgroups = set() if node.exists else self.hostgroups_set
-        else:
-            node_hostgroups = set(node_hostgroups)
+            node_hostgroups = [] if node.exists else [self.hostgroup.name]
 
-        if not node_hostgroups.intersection(self.hostgroups_sorted):
-            return SatisfiedResult(
-                "WrongHostgroup",
-                self,
-                node,
-                reasons=[
-                    "Node {} is not in any of the target hostgroups: {} != {}".format(
-                        node, node_hostgroups, self.hostgroups_sorted
-                    )
-                ],
+        if self.hostgroup.name not in node_hostgroups:
+            msg = "{} is not in the target hostgroup {}: {}".format(
+                node, self.hostgroup.name, node_hostgroups
             )
+            logging.trace("WrongHostgroup %s", msg)
+            return SatisfiedResult("WrongHostgroup", self, node, reasons=[msg],)
+
+        # Checking child constraints after our own because otherwise
+        # there will be pointless results logged that will confuse users.
+        for child_constraint in self.get_children():
+            result = child_constraint.satisfied_by_node(node)
+            if not result:
+                return result
 
         return SatisfiedResult("success", self, node)
 
     def do_decrement(self, node: Node) -> bool:
-        node_qname = get_node_qname(node) or self.qname
-        assert node_qname == self.qname
+        node_hostgroups = set(get_node_hostgroups(node) or [self.hostgroup.name])
 
-        node_hostgroups = set(get_node_hostgroups(node) or self.hostgroups_set)
-
-        hg_intersect = self.hostgroups_set.intersection(node_hostgroups)
+        hg_intersect = self.hostgroup.name in node_hostgroups
         if not hg_intersect:
             raise AssertionError(
-                "{} does not intersect {}".format(node_hostgroups, self.hostgroups_set)
+                "{} does not intersect {}".format(node_hostgroups, self.hostgroup.name)
             )
 
         assert node.placement_group in [
@@ -1182,27 +1247,38 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
             self.placement_group,
         ], "placement group %s != %s" % (node.placement_group, self.placement_group)
 
-        node.placement_group = self.placement_group
+        if node.exists:
+            assert (
+                node.placement_group == self.placement_group
+            ), "placement group %s != %s" % (node.placement_group, self.placement_group)
 
-        if not node.exists:
-            # for new nodes, set this attribute.
-            node.node_attribute_overrides["Configuration"] = {
-                "gridengine_qname": self.qname,
-                "gridengine_hostgroups": " ".join(self.hostgroups_sorted),
-            }
+        else:
+
+            assert node.placement_group in [None, self.placement_group]
+
+            node.placement_group = self.placement_group
+
+            add_node_to_hostgroup(node, self.hostgroup)
+
+        for child in self.hostgroup.constraints:
+            assert child.do_decrement(node)
+
         return True
 
+    def get_children(self) -> List[NodeConstraint]:
+        return [self.child_constraint] if self.child_constraint else []
+
     def __str__(self) -> str:
-        return "QueueAndHostgroups(qname={}, hostgroups={}, placement_group={})".format(
-            self.qname, ",".join(self.hostgroups_sorted), self.placement_group
+        return "HostgroupConstraint(hostgroup={}, placement_group={}, constraints={})".format(
+            self.hostgroup.name, self.placement_group, self.child_constraint
         )
 
     def to_dict(self) -> Dict:
         return {
-            "queue-and-hostgroups": {
-                "qname": self.qname,
-                "hostgroups": self.hostgroups_sorted,
+            "hostgroup-and-pg": {
+                "hostgroup": self.hostgroup.name,
                 "placement-group": self.placement_group,
+                "constraints": self.get_children(),
             }
         }
 
@@ -1213,15 +1289,13 @@ class QueueAndHostgroupConstraint(BaseNodeConstraint):
                 "Unexpected dictionary for QueueAndHostgroups: {}".format(d)
             )
 
-        c = d["queue-and-hostgroups"]
+        c = d["hostgroups-and-pg"]
         # TODO validation
         specified = set(c.keys())
-        valid = set(["qname", "hostgroups", "placement-group"])
+        valid = set(["hostgroups", "placement-group"])
         unexpected = specified - valid
         assert not unexpected, "Unexpected attribute - {}".format(unexpected)
-        return QueueAndHostgroupConstraint(
-            c["qname"], c["hostgroups"], c.get("placement-group")
-        )
+        return HostgroupConstraint(c["hostgroups"], c.get("placement-group"))
 
 
 class GENodeQueue(NodeQueue):
@@ -1241,7 +1315,7 @@ class GENodeQueue(NodeQueue):
         # return EarlyBailoutResult("NoSlots", node, ["No more slots/ncpus remaining"])
 
 
-register_parser("queue-and-hostgroups", QueueAndHostgroupConstraint.from_dict)
+register_parser("hostgroups-and-pg", HostgroupConstraint.from_dict)
 
 
 def _parse_tasks(expr: str) -> int:

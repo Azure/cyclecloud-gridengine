@@ -1,9 +1,8 @@
-from gridengine.queue import tokenize_pe_list
+from gridengine.queue import parse_slots
 
 
-def test_pe_list_tokenizing() -> None:
-    assert [
-        "NONE",
-        "@mpihosts=mpi mpislots",
-        "@smphosts=smp1,smp2",
-    ] == tokenize_pe_list("NONE,[@mpihosts=mpi mpislots],[@smphosts=smp1,smp2")
+def test_parse_slots() -> None:
+    slots_with_0 = parse_slots("0, [@allhosts=0], [tux=4], [@onprem=16]")
+    slots_without_0 = parse_slots("[@allhosts=0], [tux=4], [@onprem=16]")
+    assert slots_with_0 == slots_without_0
+    assert slots_with_0 == {"@allhosts": 0, "tux": 4, "@onprem": 16}

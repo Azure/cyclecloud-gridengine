@@ -149,7 +149,12 @@ def _parse_complexes(
             continue
         c = dict(zip(headers, toks))
         try:
-            if relevant_complexes and c["name"] not in relevant_complexes:
+
+            if (
+                relevant_complexes
+                and c["name"] not in relevant_complexes
+                and c["shortcut"] not in relevant_complexes
+            ):
                 logging.trace(
                     "Ignoring complex %s because it was not defined in gridengine.relevant_complexes",
                     c["name"],

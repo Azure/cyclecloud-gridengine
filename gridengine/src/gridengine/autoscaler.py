@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import sys
 import typing
 from argparse import ArgumentParser
@@ -11,7 +10,6 @@ from hpc.autoscale.job import demandcalculator as dcalclib
 from hpc.autoscale.job import demandprinter
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
-from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import SingletonLock
@@ -195,14 +193,6 @@ def calculate_demand(
     demand_calculator = new_demand_calculator(
         config, ge_env, ge_driver, ctx_handler, node_history
     )
-
-    def parse_gridengine_hostgroups(node: Node) -> List[str]:
-        hostgroups_expr = node.metadata.get("gridengine_hostgroups")
-        if not hostgroups_expr:
-            hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
-        if hostgroups_expr:
-            return re.split(",| +", hostgroups_expr)
-        return []
 
     for name, default_complex in ge_env.complexes.items():
         if name == "slots":

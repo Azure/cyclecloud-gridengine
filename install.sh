@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 INSTALL_PYTHON3=0
+USE_JETPACK_PYTHON3=0
 INSTALL_VIRTUALENV=0
 VENV=/opt/cycle/cyclecloud-gridengine/venv
 
@@ -12,6 +13,10 @@ while (( "$#" )); do
             INSTALL_VIRTUALENV=1
             shift
             ;;
+        --use-jetpack-python3)
+            USE_JETPACK_PYTHON3=1
+            shift
+            ;;
         --install-venv)
             INSTALL_VIRTUALENV=1
             shift
@@ -20,6 +25,7 @@ while (( "$#" )); do
             VENV=$2
             shift 2
             ;;
+
         -*|--*=)
             echo "Unknown option $1" >&2
             exit 1
@@ -34,6 +40,21 @@ done
 echo INSTALL_PYTHON3=$INSTALL_PYTHON3
 echo INSTALL_VIRTUALENV=$INSTALL_VIRTUALENV
 echo VENV=$VENV
+
+
+if [ $USE_JETPACK_PYTHON3 == 1 ]; then
+    export PATH=/opt/cycle/jetpack/system/embedded/bin:$PATH
+else
+    export PATH=$(python -c '
+import os
+paths = os.environ["PATH"].split(os.pathsep)
+cc_home = os.getenv("CYCLECLOUD_HOME", "/opt/cycle/jetpack")
+print(os.pathsep.join(
+    [p for p in paths if cc_home not in p]))')
+fi
+
+echo $PATH > /tmp/debug_path.txt
+which python3 >> /tmp/debug_path.txt
 
 which python3 > /dev/null;
 if [ $? != 0 ]; then

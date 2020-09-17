@@ -23,8 +23,8 @@ from hpc.autoscale.results import (
 )
 from hpc.autoscale.util import partition_single
 
-from gridengine import autoscaler, environment, validate
-from gridengine.driver import GridEngineDriver, QueueAndHostgroupConstraint
+from gridengine import autoscaler, environment, util, validate
+from gridengine.driver import GridEngineDriver, HostgroupConstraint
 from gridengine.environment import from_qconf
 from gridengine.queue import GridEngineQueue
 
@@ -85,7 +85,7 @@ def delete_nodes(
         for node in nodes:
             if node.assignments:
                 error(
-                    "Node %s is currently matched to one or more jobs (%s)."
+                    "%s is currently matched to one or more jobs (%s)."
                     + " Please specify --force to continue.",
                     node,
                     node.assignments,
@@ -93,12 +93,12 @@ def delete_nodes(
 
             if node.keep_alive:
                 error(
-                    "Node %s is marked as KeepAlive=true. Please exclude this.", node,
+                    "%s is marked as KeepAlive=true. Please exclude this.", node,
                 )
 
             if node.required:
                 error(
-                    "Node %s is unmatched but is flagged as required."
+                    "%s is unmatched but is flagged as required."
                     + " Please specify --force to continue.",
                     node,
                 )
@@ -205,11 +205,15 @@ def queues(config: Dict) -> None:
 
 def validate_func(config: Dict) -> None:
     ge_env = environment.from_qconf(config)
+    dcalc = autoscaler.new_demand_calculator(config, ge_env=ge_env)
     queue: GridEngineQueue
     failure = False
-    failure = validate.validate_nodes(config, warn) or failure
+    failure = (
+        validate.validate_hg_intersections(ge_env, dcalc.node_mgr, warn) or failure
+    )
+    failure = validate.validate_nodes(config, dcalc, warn) or failure
     for qname, queue in ge_env.queues.items():
-        failure = validate.validate_queue(queue, ge_env.qbin, warn) or failure
+        failure = validate.validate_queue_has_hosts(queue, ge_env.qbin, warn) or failure
         failure = validate.validate_ht_hostgroup(queue, warn) or failure
         failure = validate.validate_pe_hostgroups(queue, warn) or failure
 
@@ -257,20 +261,20 @@ def nodes(
 def jobs(config: Dict) -> None:
     """Writes out Job objects as json"""
     ge_env = environment.from_qconf(config)
-    json.dump(ge_env.jobs, sys.stdout, indent=2, default=lambda x: x.to_dict())
+    util.json_dump(ge_env.jobs)
 
 
 def scheduler_nodes(config: Dict) -> None:
     """Writes out SchedulerNode objects as json"""
     ge_env = environment.from_qconf(config)
-    json.dump(ge_env.nodes, sys.stdout, indent=2, default=lambda x: x.to_dict())
+    util.json_dump(ge_env.nodes)
 
 
 def jobs_and_nodes(config: Dict) -> None:
     """Writes out SchedulerNode and Job objects as json - simultaneously to avoid race"""
     ge_env = environment.from_qconf(config)
     to_dump = {"jobs": ge_env.jobs, "nodes": ge_env.nodes}
-    json.dump(to_dump, sys.stdout, indent=2, default=lambda x: x.to_dict())
+    util.json_dump(to_dump)
 
 
 def complexes(config: Dict, include_irrelevant: bool = False) -> None:
@@ -477,8 +481,8 @@ def analyze(config: Dict, job_id: str) -> None:
     for result in results:
         if isinstance(result, MatchResult) and result:
             continue
-        QueueAndHostgroupConstraint
-        if isinstance(result, QueueAndHostgroupConstraint) and not result:
+
+        if isinstance(result, HostgroupConstraint) and not result:
             continue
         print(result.message)
     # autoscaler.print_demand(config, demand_result, output_columns, output_format)
@@ -494,7 +498,6 @@ def shell(config: Dict) -> None:
     ge_env = environment.from_qconf(config)
     ge_driver = autoscaler.new_driver(config, ge_env)
     config = ge_driver.preprocess_config(config)
-    ge_env = environment.from_qconf(config)
     demand_calc = autoscaler.new_demand_calculator(config, ge_env, ge_driver, ctx)
 
     queues = ge_env.queues
@@ -548,6 +551,7 @@ def shell(config: Dict) -> None:
                     )
             except Exception:
                 pass
+
         interpreter.push("from hpc.autoscale.job.job import Job\n")
         interpreter.push("from hpc.autoscale import hpclogging as logging\n")
 

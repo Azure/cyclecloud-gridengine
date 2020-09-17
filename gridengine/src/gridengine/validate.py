@@ -1,11 +1,14 @@
-import re
 from typing import Callable, Dict, List, Set
 
+from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.node import Node
+from hpc.autoscale.node.nodemanager import NodeManager
+from hpc.autoscale.util import partition_single
 
-from gridengine import autoscaler
+from gridengine.environment import GridEngineEnvironment
 from gridengine.qbin import QBin
 from gridengine.queue import GridEngineQueue
+from gridengine.util import get_node_hostgroups
 
 UNBOLD = "\033[0m"
 BOLD = "\033[1m"
@@ -18,7 +21,7 @@ def bold(s: str) -> str:
 WarnFunction = Callable[..., None]
 
 
-def validate_queue(
+def validate_queue_has_hosts(
     queue: GridEngineQueue, qbin: QBin, warn_function: WarnFunction
 ) -> bool:
     # ensure that there is at least one host for each queue.
@@ -40,6 +43,47 @@ def validate_queue(
     )
     warn_function("    Empty hostgroups = %s", " ".join(empty_hostgroups))
     return False
+
+
+def validate_hg_intersections(
+    ge_env: GridEngineEnvironment, node_mgr: NodeManager, warn_function: WarnFunction
+) -> bool:
+    bucket_to_hgs: Dict[str, Set[str]] = {}
+    for bucket in node_mgr.get_buckets():
+        if bucket.bucket_id not in bucket_to_hgs:
+            bucket_to_hgs[str(bucket)] = set()
+
+    by_str = partition_single(node_mgr.get_buckets(), str)
+
+    for queue in ge_env.queues.values():
+        if not queue.autoscale_enabled:
+            continue
+
+        for hostgroup in queue.bound_hostgroups.values():
+            for bucket in node_mgr.get_buckets():
+                is_satisfied = True
+                for constraint in hostgroup.constraints:
+                    result = constraint.satisfied_by_bucket(bucket)
+                    if not result:
+                        is_satisfied = False
+                        break
+                if is_satisfied:
+                    bucket_to_hgs[str(bucket)].add(hostgroup.name)
+
+    failure = False
+    for bkey, matches in bucket_to_hgs.items():
+        bucket = by_str[bkey]
+        if not matches:
+            warn_function(
+                "%s is not matched by any hostgroup. This is not an error.", bucket,
+            )
+        elif len(matches) > 1:
+            warn_function(
+                "%s is matched by more than one hostgroup %s. This is not an error.",
+                bucket,
+                ",".join(matches),
+            )
+    return failure
 
 
 def validate_ht_hostgroup(queue: GridEngineQueue, warn_function: WarnFunction) -> bool:
@@ -78,23 +122,14 @@ def validate_pe_hostgroups(queue: GridEngineQueue, warn_function: WarnFunction) 
     return True
 
 
-def validate_nodes(config: Dict, warn: WarnFunction) -> bool:
+def validate_nodes(config: Dict, dcalc: DemandCalculator, warn: WarnFunction) -> bool:
     failure = False
 
-    dcalc = autoscaler.new_demand_calculator(config)
     pg_to_hg: Dict[str, Dict[str, List[Node]]] = {}
 
     for node in dcalc.node_mgr.get_nodes():
-        qname_expr = node.software_configuration.get("gridengine_hostgroups", "")
-        if not qname_expr:
-            failure = True
-            warn(
-                "%s does not define gridengine_qname defined and will not be able to join the cluster.",
-                node,
-            )
-
-        hg_expr = node.software_configuration.get("gridengine_hostgroups", "")
-        if not hg_expr:
+        hostgroups = get_node_hostgroups(node)
+        if not hostgroups:
             failure = True
             warn(
                 "%s does not define gridengine_hostgroups and will not be able to join the cluster.",
@@ -107,7 +142,6 @@ def validate_nodes(config: Dict, warn: WarnFunction) -> bool:
         if node.placement_group not in pg_to_hg:
             pg_to_hg[node.placement_group] = {}
 
-        hostgroups = re.split(",|[ \t]+", hg_expr)
         for hg in hostgroups:
 
             if hg not in pg_to_hg[node.placement_group]:

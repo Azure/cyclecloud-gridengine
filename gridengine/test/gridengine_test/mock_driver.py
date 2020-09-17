@@ -100,7 +100,10 @@ class MockQsub:
         writer.write(xmlstr)
 
     def parse_jobs(self) -> List[Job]:
-        return _parse_jobs(self.doc, self.ge_env.queues)
+        ret = _parse_jobs(self.doc, self.ge_env)
+
+        # from gridengine import util; util.json_dump(ret)
+        return ret
 
 
 class MockGridEngineDriver:

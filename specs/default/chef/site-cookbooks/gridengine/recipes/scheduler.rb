@@ -122,7 +122,7 @@ execute "set qmaster hostname" do
     command "echo #{node[:hostname]} > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
   else
     command "hostname -f > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
-  fi
+  end 
 end
 
 case node[:platform_family]
@@ -399,11 +399,13 @@ file monitoring_config do
   EOH
   mode 750
   not_if { ::File.exist?(monitoring_config) }
+  only_if { node[:cyclecloud][:jetpack][:version] < "8.1" }
 end
 
 jetpack_send "Registering QMaster for monitoring." do
   file monitoring_config
   routing_key "#{node[:cyclecloud][:service_status][:routing_key]}.gridengine"
+  only_if { node[:cyclecloud][:jetpack][:version] < "8.1" }
 end
 
 
@@ -424,16 +426,18 @@ bash 'setup cyclecloud-gridengine' do
   code <<-EOH
   set -e
   . /etc/cluster-setup.sh
-  jetpack download #{node[:gridengine][:installer]} --project gridengine #{node[:cyclecloud][:bootstrap]}/
-
   cd #{node[:cyclecloud][:bootstrap]}/
-  
+
+  rm -f #{node[:gridengine][:installer]} 2> /dev/null
+
+  jetpack download #{node[:gridengine][:installer]} --project gridengine ./
+   
   tar xzf #{node[:gridengine][:installer]}
+
   cd cyclecloud-gridengine/
   
   INSTALLDIR=/opt/cycle/gridengine
   mkdir -p $INSTALLDIR/venv
-  
   ./install.sh --install-python3 --venv $INSTALLDIR/venv
   
   azge initconfig --cluster-name #{node[:cyclecloud][:cluster][:name]} \

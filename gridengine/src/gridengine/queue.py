@@ -1,88 +1,65 @@
 import re
 import typing
-from io import StringIO
 from typing import Dict, List, Optional
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
-from hpc.autoscale.node.constraints import Constraint
+from hpc.autoscale.util import partition_single
 
-from gridengine.util import parse_ge_config
+from gridengine.hostgroup import BoundHostgroup, Hostgroup
+from gridengine.qbin import QBin
+from gridengine.util import parse_ge_config, parse_hostgroup_mapping
 
 if typing.TYPE_CHECKING:
     from gridengine.environment import GridEngineEnvironment
     from gridengine.parallel_environments import ParallelEnvironment  # noqa: F401
-    from gridengine.complex import Complex  # noqa: F401
 
 
 class GridEngineQueue:
     def __init__(
         self,
         queue_config: Dict,
-        ge_env: "GridEngineEnvironment",
-        constraints: List[Constraint],
+        pes: Dict[str, "ParallelEnvironment"],
+        unbound_hostgroups: Dict[str, Hostgroup],
         autoscale_enabled: bool = True,
     ) -> None:
         self.queue_config = queue_config
-        self.ge_env = ge_env
-        if isinstance(constraints, dict):
-            constraints = [constraints]
 
-        if not isinstance(constraints, list):
-            logging.error(
-                "Ignoring invalid constraints for queue %s! %s", self.qname, constraints
-            )
-            constraints = [{"node.nodearray": self.qname}]
-
-        self.constraints = constraints
         self.autoscale_enabled = autoscale_enabled
+        assert isinstance(self.queue_config["hostlist"], str), self.queue_config[
+            "hostlist"
+        ]
+
         self.__hostlist = re.split(",| +", self.queue_config["hostlist"])
         self.__pe_to_hostgroups: Dict[str, List[str]] = {}
         self._pe_keys_cache: Dict[str, List[str]] = {}
         self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
-        self.__slots = {}
+        self.__slots = parse_slots(self.queue_config.get("slots", ""))
 
-        slot_toks = re.split(",| +", self.queue_config.get("slots", ""))
-        for tok in slot_toks:
-            if "[" not in tok:
-                continue
-            tok = tok.replace("[", "").replace("]", "")
-            fqdn, slot_str = tok.split("=")
-            slot = int(slot_str.strip())
-            hostname = fqdn.strip().lower().split(".")[0]
-            self.__slots[ht.Hostname(hostname)] = slot
+        pe_list = parse_hostgroup_mapping(queue_config["pe_list"])
 
-        for tok in tokenize_pe_list(queue_config["pe_list"]):
-            tok = tok.strip()
+        for hostgroup, pes_for_hg in pe_list.items():
+            for pe_name in pes_for_hg:
+                if not pe_name:
+                    continue
 
-            if tok == "NONE":
-                continue
-
-            pe_name_expr: str
-            hostgroups: List[str]
-
-            if "@" in tok and "=" in tok:
-                tok = tok.lstrip("[").rstrip("]")
-                hostgroup, pe_name_expr = tok.split("=", 1)
-
-                hostgroups = [hostgroup]
-            else:
-                pe_name_expr = tok
-                hostgroups = [x for x in self.__hostlist if x.startswith("@")]
-
-            pe_names = re.split(",| +", pe_name_expr)
-
-            for pe_name in pe_names:
-                if pe_name not in ge_env.pes:
+                if pe_name not in pes:
+                    assert False
                     logging.warning(
                         "Parallel environment %s was not found - %s. Skipping",
                         pe_name,
-                        list(ge_env.pes.keys()),
+                        list(pes.keys()),
                     )
                     continue
-                assert pe_name not in self.__pe_to_hostgroups
-                self.__pe_to_hostgroups[pe_name] = hostgroups
-                self.__parallel_environments[pe_name] = ge_env.pes[pe_name]
+                self.__parallel_environments[pe_name] = pes[pe_name]
+
+                # common case, and let's avoid nlogn insertion
+                if pe_name not in self.__pe_to_hostgroups:
+                    self.__pe_to_hostgroups[pe_name] = [hostgroup]
+                else:
+                    all_hostgroups = self.__pe_to_hostgroups[pe_name]
+                    if hostgroup not in all_hostgroups:
+                        all_hostgroups.append(hostgroup)
 
         if queue_config["pe_list"] and queue_config["pe_list"].lower() != "none":
             assert self.__parallel_environments, queue_config["pe_list"]
@@ -93,7 +70,29 @@ class GridEngineQueue:
                 all_host_groups = all_host_groups - set(
                     self.get_hostgroups_for_pe(pe.name)
                 )
+
         self.__ht_hostgroups = list(all_host_groups)
+
+        self.user_lists = parse_hostgroup_mapping(
+            queue_config.get("user_lists") or "", self.hostlist_groups, filter_none=True
+        )
+        self.xuser_lists = parse_hostgroup_mapping(
+            queue_config.get("xuser_lists") or "",
+            self.hostlist_groups,
+            filter_none=True,
+        )
+        self.projects = parse_hostgroup_mapping(
+            queue_config.get("projects") or "", self.hostlist_groups, filter_none=True
+        )
+        self.xprojects = parse_hostgroup_mapping(
+            queue_config.get("xprojects") or "", self.hostlist_groups, filter_none=True
+        )
+        self.__bound_hostgroups: Dict[str, BoundHostgroup] = {}
+
+        for hg_name in self.hostlist_groups:
+            self.__bound_hostgroups[hg_name] = BoundHostgroup(
+                self, unbound_hostgroups[hg_name]
+            )
 
     @property
     def qname(self) -> str:
@@ -112,9 +111,8 @@ class GridEngineQueue:
         return self.__slots
 
     @property
-    def complexes(self) -> Dict[str, "Complex"]:
-        # TODO RDH should not need this here
-        return self.ge_env.complexes
+    def bound_hostgroups(self) -> Dict[str, BoundHostgroup]:
+        return self.__bound_hostgroups
 
     def has_pe(self, pe_name: str) -> bool:
         return bool(self._pe_keys(pe_name))
@@ -148,7 +146,11 @@ class GridEngineQueue:
                     self.qname, pe_name
                 )
             )
-        return [self.__parallel_environments[x] for x in self._pe_keys(pe_name)]
+        return [
+            self.__parallel_environments[x]
+            for x in self._pe_keys(pe_name)
+            if x in self.__parallel_environments
+        ]
 
     def get_hostgroups_for_ht(self) -> List[str]:
         # TODO expensive
@@ -177,6 +179,9 @@ class GridEngineQueue:
             return None
 
         first = self.get_hostgroups_for_pe(pe.name)[0]
+        if not first:
+            return first
+
         placement_group = ht.PlacementGroup(first.replace("@", ""))
         placement_group = re.sub("[^a-zA-z0-9-_]", "_", placement_group)
         return placement_group
@@ -190,71 +195,63 @@ class GridEngineQueue:
         return str(self)
 
 
-def tokenize_pe_list(expr: str) -> List[str]:
-    """ Since GE can use either a comma or space to separate both expressions and
-        the list of pes that map to a hostgroup, we have to use a stateful parser.
-        NONE,[@hostgroup=pe1 pe2],[@hostgroup2=pe3,pe4]
-    """
-    buf = StringIO()
-    toks = []
+def parse_slots(slots_expr: str) -> Dict[str, int]:
+    slots: Dict[str, int] = {}
 
-    def append_if_token() -> StringIO:
-        if buf.getvalue():
-            toks.append(buf.getvalue())
-        return StringIO()
+    mapping = parse_hostgroup_mapping(slots_expr, filter_none=True)
+    for host, slots_as_list in mapping.items():
+        if len(slots_as_list) != 1:
+            raise AssertionError(
+                "Expected single int. Got %s. Whole expression\n%s"
+                % (slots_as_list, slots_expr),
+            )
+        slots[host] = int(slots_as_list[0])
 
-    in_left_bracket = False
+    if None in slots:
+        slots.pop(None)  # type: ignore
 
-    for c in expr:
-        if c.isalnum():
-            buf.write(c)
-        elif c == "[":
-            in_left_bracket = True
-        elif c == "]":
-            in_left_bracket = False
-        elif c in [" ", ","] and not in_left_bracket:
-            buf = append_if_token()
-        else:
-            buf.write(c)
-
-    buf = append_if_token()
-
-    return toks
+    return slots
 
 
-def read_queue_configs(autoscale_config: Dict, ge_env: "GridEngineEnvironment") -> None:
-    qnames = ge_env.qbin.qconf(["-sql"]).split()
+def read_queues(
+    autoscale_config: Dict,
+    pes: Dict[str, "ParallelEnvironment"],
+    hostgroups: List[Hostgroup],
+    qbin: QBin,
+) -> Dict[str, GridEngineQueue]:
+    queues = {}
+    qnames = qbin.qconf(["-sql"]).split()
 
     logging.debug("Found %d queues: %s", len(qnames), " ".join(qnames))
     autoscale_queues_config = autoscale_config.get("gridengine", {}).get("queues", {})
 
+    unbound_hostgroups = partition_single(hostgroups, lambda h: h.name)
+
     for qname in qnames:
-        lines = ge_env.qbin.qconf(["-sq", qname]).splitlines()
+        lines = qbin.qconf(["-sq", qname]).splitlines()
         queue_config = parse_ge_config(lines)
-        queue_constraints = autoscale_queues_config.get(queue_config["qname"], {}).get(
-            "constraints", []
-        )
         autoscale_enabled = autoscale_queues_config.get(queue_config["qname"], {}).get(
             "autoscale_enabled", True
         )
-        ge_env.queues[qname] = GridEngineQueue(
-            queue_config, ge_env, queue_constraints, autoscale_enabled
+        queues[qname] = GridEngineQueue(
+            queue_config, pes, unbound_hostgroups, autoscale_enabled
         )
+
+    return queues
 
 
 def new_gequeue(
     qname: str,
-    hostlist: List[str],
-    pe_list: List[str],
-    constraints: List[Constraint],
+    hostlist: str,
+    pe_list: str,
     slots_expr: str,
     ge_env: "GridEngineEnvironment",
-) -> "GridEngineQueue":
-    assert isinstance(hostlist, list)
+) -> GridEngineQueue:
     queue_config = {
         "qname": qname,
-        "hostlist": " ".join(hostlist),
-        "pe_list": " ".join(pe_list),
+        "hostlist": hostlist,
+        "pe_list": pe_list,
         "slots": slots_expr,
     }
-    return GridEngineQueue(queue_config, ge_env, constraints)
+
+    return GridEngineQueue(queue_config, ge_env.pes, ge_env.hostgroups)
