@@ -212,9 +212,15 @@ def calculate_demand(
     for bucket in demand_calculator.node_mgr.get_buckets():
         if "slots" not in bucket.resources:
             default = (
-                '"default_resources": [{"node.nodearray": %s, "slots", "node.vcpu_count"]'
+                '"default_resources": [{"select": {"node.nodearray": "%s"}, "name": "slots", "value": "node.vcpu_count"}]'
                 % (bucket.nodearray)
             )
+            demand_calculator.node_mgr.add_default_resource(
+                selection={"node.nodearray": bucket.nodearray},
+                resource_name="slots",
+                default_value="node.vcpu_count",
+            )
+
             logging.warning(
                 """slots is not defined for bucket {}. Try adding {} to your config.""".format(
                     bucket, default
