@@ -284,11 +284,11 @@ def new_driver(config: Dict, ge_env: GridEngineEnvironment) -> "GridEngineDriver
 
     ge_config = config.get("gridengine", {})
 
-    # just shorthand for gridengine.deferdriver.DeferredDriver
-    if ge_config.get("driver_scripts_dir"):
-        deferred_qname = "gridengine.deferdriver.DeferredDriver"
-        if ge_config.get("driver", deferred_qname) == deferred_qname:
-            ge_config["driver"] = deferred_qname
+    # # just shorthand for gridengine.deferdriver.DeferredDriver
+    # if ge_config.get("driver_scripts_dir"):
+    #     deferred_qname = "gridengine.deferdriver.DeferredDriver"
+    #     if ge_config.get("driver", deferred_qname) == deferred_qname:
+    #         ge_config["driver"] = deferred_qname
 
     driver_expr = ge_config.get("driver", "gridengine.driver.new_driver")
 
