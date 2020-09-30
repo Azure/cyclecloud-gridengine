@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 import typing
@@ -12,7 +11,7 @@ from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
-from hpc.autoscale.util import SingletonLock
+from hpc.autoscale.util import SingletonLock, json_load
 
 from gridengine import environment as envlib
 from gridengine.environment import GridEngineEnvironment
@@ -364,8 +363,7 @@ def main() -> int:
         print("{} does not exist.".format(config_path), file=sys.stderr)
         return 1
 
-    with open(config_path) as fr:
-        config = json.load(fr)
+    config = json_load(config_path)
 
     autoscale_grid_engine(config, ctx_handler=ctx_handler)
 

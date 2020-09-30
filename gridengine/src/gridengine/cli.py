@@ -21,7 +21,7 @@ from hpc.autoscale.results import (
     MatchResult,
     register_result_handler,
 )
-from hpc.autoscale.util import partition_single
+from hpc.autoscale.util import json_load, partition_single
 
 from gridengine import autoscaler, environment, util, validate
 from gridengine.driver import GridEngineDriver, HostgroupConstraint
@@ -596,8 +596,7 @@ def main(argv: Iterable[str] = None) -> None:
             try:
                 if not c:
                     raise RuntimeError("Did not specify config -c/--config")
-                with open(c) as fr:
-                    config = json.load(fr)
+                config = json_load(c)
                 # make sure we initialize logging ASAP
                 logging.initialize_logging(config)
                 return config
