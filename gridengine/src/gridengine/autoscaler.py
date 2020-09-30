@@ -3,7 +3,7 @@ import os
 import sys
 import typing
 from argparse import ArgumentParser
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job import demandcalculator as dcalclib
@@ -49,6 +49,8 @@ def autoscale_grid_engine(
         # allow tests to pass in a mock
         ge_driver = new_driver(config, ge_env)
 
+    ge_driver.initialize_environment()
+
     config = ge_driver.preprocess_config(config)
 
     logging.debug("Driver = %s", ge_driver)
@@ -62,7 +64,10 @@ def autoscale_grid_engine(
         if "a" in state and "u" in state:
             invalid_nodes.append(node)
 
-    ge_driver.clean_hosts(invalid_nodes)
+    # nodes in error state must also be deleted
+    nodes_to_delete = ge_driver.clean_hosts(invalid_nodes)
+    for node in nodes_to_delete:
+        ge_env.delete_node(node)
 
     demand_calculator = calculate_demand(
         config, ge_env, ge_driver, ctx_handler, node_history
@@ -173,25 +178,12 @@ def new_demand_calculator(
         node_history.create_timeout = config.get("boot_timeout", 3600)
         node_history.last_match_timeout = config.get("idle_timeout", 300)
 
-    return dcalclib.new_demand_calculator(
+    demand_calculator = dcalclib.new_demand_calculator(
         config,
         existing_nodes=ge_env.nodes,
         node_history=node_history,
         node_queue=ge_driver.new_node_queue(),
         singleton_lock=singleton_lock,  # it will handle the none case
-    )
-
-
-def calculate_demand(
-    config: Dict,
-    ge_env: GridEngineEnvironment,
-    ge_driver: "GridEngineDriver",
-    ctx_handler: Optional[DefaultContextHandler] = None,
-    node_history: Optional[NodeHistory] = None,
-) -> DemandCalculator:
-
-    demand_calculator = new_demand_calculator(
-        config, ge_env, ge_driver, ctx_handler, node_history
     )
 
     for name, default_complex in ge_env.complexes.items():
@@ -209,8 +201,11 @@ def calculate_demand(
             {}, name, default_complex.default
         )
 
+    ccnode_id_added = False
+    slots_added: Set[str] = set()
+
     for bucket in demand_calculator.node_mgr.get_buckets():
-        if "slots" not in bucket.resources:
+        if "slots" not in bucket.resources and bucket.nodearray not in slots_added:
             default = (
                 '"default_resources": [{"select": {"node.nodearray": "%s"}, "name": "slots", "value": "node.vcpu_count"}]'
                 % (bucket.nodearray)
@@ -222,10 +217,37 @@ def calculate_demand(
             )
 
             logging.warning(
-                """slots is not defined for bucket {}. Try adding {} to your config.""".format(
+                """slots is not defined for bucket {}. Using the default, which you can add to your config: {}""".format(
                     bucket, default
                 )
             )
+            slots_added.add(bucket.nodearray)
+
+        # ccnodeid will almost certainly not be defined. It just needs
+        # to be definede once, so we will add a default for all nodes
+        # the first time we see it is missingg
+        if "ccnodeid" not in bucket.resources and not ccnode_id_added:
+            demand_calculator.node_mgr.add_default_resource(
+                selection={},  # applies to all nodes
+                resource_name="ccnodeid",
+                default_value=lambda n: n.delayed_node_id.node_id,
+            )
+            ccnode_id_added = True
+
+    return demand_calculator
+
+
+def calculate_demand(
+    config: Dict,
+    ge_env: GridEngineEnvironment,
+    ge_driver: "GridEngineDriver",
+    ctx_handler: Optional[DefaultContextHandler] = None,
+    node_history: Optional[NodeHistory] = None,
+) -> DemandCalculator:
+
+    demand_calculator = new_demand_calculator(
+        config, ge_env, ge_driver, ctx_handler, node_history
+    )
 
     for job in ge_env.jobs:
         if job.metadata.get("job_state") == "running":

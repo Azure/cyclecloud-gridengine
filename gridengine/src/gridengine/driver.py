@@ -57,6 +57,44 @@ class GridEngineDriver:
             self.read_only = False
         self._hostgroup_cache: Dict[str, List[str]] = {}
 
+    def initialize_environment(self) -> None:
+        expected = 'Complex attribute "ccnodeid" does not exist'
+        try:
+            self.ge_env.qbin.qconf(["-sce", "ccnodeid"])
+            return
+        except CalledProcessError as e:
+            if e.stdout and e.stdout.decode().strip() != expected:
+                raise
+
+        contents = """name        ccnodeid
+shortcut    ccnodeid
+type        RESTRING
+relop       ==
+requestable YES
+consumable  NO
+default     NONE
+urgency     0
+aapre       NO
+affinity    0.000000"""
+        fd, cchost_path = tempfile.mkstemp()
+        try:
+            logging.getLogger("gridengine.driver").info(
+                "cchost complex contents written to %s", cchost_path
+            )
+            logging.getLogger("gridengine.driver").info(contents)
+            with open(fd, "w") as fw:
+                fw.write(contents)
+
+            self.ge_env.qbin.qconf(["-Ace", cchost_path])
+        finally:
+            if os.path.exists(cchost_path):
+                try:
+                    os.remove(cchost_path)
+                except Exception:
+                    logging.exception(
+                        "Failed to remove temporary file %s.", cchost_path
+                    )
+
     def handle_draining(
         self, unmatched_nodes: List[SchedulerNode]
     ) -> List[SchedulerNode]:
@@ -232,8 +270,8 @@ class GridEngineDriver:
 
         # TODO rethink this RDH
         # self.handle_undraining(matched_nodes)
-
-        return self.add_nodes_to_cluster(matched_nodes)
+        managed_matched = [n for n in matched_nodes if n.managed]
+        return self.add_nodes_to_cluster(managed_matched)
 
     def handle_post_join_cluster(self, nodes: List[Node]) -> List[Node]:
         """
@@ -278,7 +316,10 @@ class GridEngineDriver:
         fqdns = self.ge_env.qbin.qconf(["-ss"]).splitlines()
         submit_hostnames = [fqdn.split(".")[0] for fqdn in fqdns]
 
-        for node in nodes:
+        filtered = [
+            n for n in nodes if n.exists and n.hostname and n.resources.get("ccnodeid")
+        ]
+        for node in filtered:
             if self._add_node_to_cluster(node, admin_hostnames, submit_hostnames):
                 ret.append(node)
         return ret
@@ -288,6 +329,9 @@ class GridEngineDriver:
     ) -> bool:
         # this is the very last thing we do, so this is basically 'committing'
         # the node.
+
+        if not node.resources.get("ccnodeid"):
+            return False
 
         if not self._validate_add_node_to_cluster(node, submit_hostnames):
             logging.fine(
@@ -417,7 +461,7 @@ class GridEngineDriver:
                 else:
                     res_value = 0
 
-            if res_name not in self.ge_env.complexes:
+            if res_name not in self.ge_env.unfiltered_complexes:
                 logging.fine("Ignoring unknown complex %s", res_name)
                 continue
 
@@ -425,7 +469,7 @@ class GridEngineDriver:
                 logging.fine("Ignoring blank complex %s for %s", res_name, node)
                 continue
 
-            complex = self.ge_env.complexes[res_name]
+            complex = self.ge_env.unfiltered_complexes[res_name]
 
             if complex.complex_type in ["TIME"]:
                 logging.fine("Ignoring TIME complex %s for %s", res_name, node)
@@ -435,10 +479,6 @@ class GridEngineDriver:
                 # this is just a duplicate of the long form
                 continue
 
-            # if complex.name in ["slots", "m_mem_free"]:
-            #     # slots are handled by ge in a special way
-            #     # m_mem_free is handled by the execute.rb
-            #     continue
             complex_values.append("{}={}".format(res_name, res_value))
 
         complex_values_csv = ",".join(complex_values)
@@ -478,6 +518,9 @@ license_oversubscription NONE""".format(
         return True
 
     def add_exec_host(self, node: Node) -> None:
+        if not node.resources.get("ccnodeid"):
+            return
+
         tempp = tempfile.mktemp()
         try:
             host_template = self.get_host_template(node)
@@ -507,10 +550,13 @@ license_oversubscription NONE""".format(
         self.ge_env.qbin.qconf(["-ah", node.hostname])
 
     def _add_to_hostgroups(self, node: Node, hostgroups: List[str]) -> None:
-        for hostgroup in hostgroups:
-            if not node.hostname:
-                continue
+        if not node.resources.get("ccnodeid"):
+            return
 
+        if not node.hostname:
+            return
+
+        for hostgroup in hostgroups:
             if not hostgroup.startswith("@"):
                 # hostgroups have to start with @
                 continue
@@ -525,21 +571,32 @@ license_oversubscription NONE""".format(
                 ["-aattr", "hostgroup", "hostlist", node.hostname, hostgroup,]
             )
 
-    def clean_hosts(self, invalid_nodes: List[SchedulerNode]) -> None:
+    def clean_hosts(self, invalid_nodes: List[SchedulerNode]) -> List[Node]:
         logging.getLogger("gridengine.driver").info("clean_hosts")
 
-        if not invalid_nodes:
-            return
+        filtered = []
+
+        for node in invalid_nodes:
+            if node.keep_alive:
+                logging.fine("Not removing %s because keep_alive=true", node)
+                continue
+            if not node.resources.get("ccnodeid"):
+                logging.fine(
+                    "Not removing %s because does not define ccnodeid", node
+                )
+                continue
+            filtered.append(node)
+
+        if not filtered:
+            return []
 
         logging.warning(
-            "Cleaning out the following hosts in state=au: %s", invalid_nodes
+            "Cleaning out the following hosts in state=au: %s",
+            [str(x) for x in filtered],
         )
-        self.handle_post_delete(invalid_nodes)
+        self.handle_post_delete(filtered)
 
-        to_clean = list([n for n in self.ge_env.nodes if n not in invalid_nodes])
-
-        for node in to_clean:
-            self.ge_env.nodes.remove(node)
+        return filtered
 
     def preprocess_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -694,8 +751,12 @@ def _get_jobs_and_nodes(
     relevant_complexes = (
         autoscale_config.get("gridengine", {}).get("relevant_complexes") or []
     )
+
     if relevant_complexes:
+        if "ccnodeid" not in relevant_complexes:
+            relevant_complexes.append("ccnodeid")
         cmd.append(" ".join(relevant_complexes))
+
     logging.debug("Query jobs and nodes with cmd '%s'", " ".join(cmd))
     raw_xml = ge_env.qbin.qstat(cmd)
     raw_xml_file = six.StringIO(raw_xml)
