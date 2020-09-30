@@ -1,4 +1,6 @@
+from subprocess import CalledProcessError
 from typing import Any, Dict, Optional
+from unittest import mock
 
 import pytest
 from hpc.autoscale.job.schedulernode import SchedulerNode
@@ -6,6 +8,7 @@ from hpc.autoscale.node import constraints
 from hpc.autoscale.node.constraints import XOr
 
 from gridengine import driver, util
+from gridengine.driver import GridEngineDriver
 from gridengine.hostgroup import BoundHostgroup, Hostgroup
 from gridengine_test.autoscaler_test import common_ge_env
 
@@ -152,3 +155,64 @@ def test_hostgroup_constraint() -> None:
     assert not XOr(*cons_list).satisfied_by_node(
         new_node("pg4", "tux42", pg4_hostgroup)
     )
+
+
+def test_initialize() -> None:
+    ge_env = common_ge_env()
+
+    # ok - make sure we propagate an unknown error
+    ge_env.qbin.qconf = mock.MagicMock(
+        ["-sce", "ccnodeid"],
+        side_effect=CalledProcessError(
+            1, cmd=["-sce", "ccnodeid"], output="Unknown error".encode()
+        ),
+    )
+    ge_driver = GridEngineDriver({}, ge_env)
+    try:
+        ge_driver.initialize_environment()
+    except CalledProcessError as e:
+        assert e.stdout.decode() == "Unknown error"
+    ge_env.qbin.qconf.assert_called_once()
+
+    # ok - make sure we propagate an unknown error
+    ge_env.qbin.qconf = mock.MagicMock(
+        ["-sce", "ccnodeid"],
+        side_effect=CalledProcessError(
+            1, cmd=["-sce", "ccnodeid"], output="Unknown error".encode()
+        ),
+    )
+    ge_driver = GridEngineDriver({"read_only": True}, ge_env)
+    ge_driver.initialize_environment()
+
+    # now it does exist
+    ge_env.qbin.qconf = mock.MagicMock(return_value="ignored".encode())
+    ge_driver = GridEngineDriver({}, ge_env)
+    ge_driver.initialize_environment()
+    ge_env.qbin.qconf.assert_called_once()
+
+    # TODO I can't figure out how to make this throw
+    # an exception the first call but not the next
+    # now it does not exist, so we will be created
+
+    class FakeQConf:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def __call__(self, args):  # type: ignore
+            self.call_count += 1
+            if args == ["-sce", "ccnodeid"]:
+                assert self.call_count == 1
+                raise CalledProcessError(
+                    1,
+                    cmd=["-sce", "ccnodeid"],
+                    output='Complex attribute "ccnodeid" does not exist'.encode(),
+                )
+            elif args[0] == "-Ace":
+                assert self.call_count == 2
+                return ""
+            else:
+                raise AssertionError("Unexpected call {}".format(args))
+
+    ge_env.qbin.qconf = FakeQConf()
+    ge_driver = GridEngineDriver({}, ge_env)
+    ge_driver.initialize_environment()

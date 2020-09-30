@@ -58,6 +58,9 @@ class GridEngineDriver:
         self._hostgroup_cache: Dict[str, List[str]] = {}
 
     def initialize_environment(self) -> None:
+        if self.read_only:
+            return
+
         expected = 'Complex attribute "ccnodeid" does not exist'
         try:
             self.ge_env.qbin.qconf(["-sce", "ccnodeid"])
@@ -201,27 +204,6 @@ affinity    0.000000"""
 
         except CalledProcessError as e:
             logging.warning(str(e))
-
-    def handle_undraining(self, matched_nodes: List[Node]) -> List[Node]:
-        assert False
-        if self.read_only:
-            return []
-
-        # TODO get list of hosts in @disabled
-        logging.getLogger("gridengine.driver").info("handle_undraining")
-
-        undrained: List[SchedulerNode] = []
-        for node in matched_nodes:
-            if node.hostname:
-                wc_queue_list_expr = "*@{}".format(node.hostname)
-                try:
-                    self.ge_env.qbin.qmod(["-e", wc_queue_list_expr])
-                    undrained.append(node)
-                except CalledProcessError as e:
-                    logging.error(
-                        "Could not undrain %s: %s.", node, str(e),
-                    )
-        return undrained
 
     def _delete_host_from_slots(self, qname: str, hostname: str) -> None:
         queue_host = "{}@{}".format(qname, hostname)
@@ -581,9 +563,7 @@ license_oversubscription NONE""".format(
                 logging.fine("Not removing %s because keep_alive=true", node)
                 continue
             if not node.resources.get("ccnodeid"):
-                logging.fine(
-                    "Not removing %s because does not define ccnodeid", node
-                )
+                logging.fine("Not removing %s because it does not define ccnodeid", node)
                 continue
             filtered.append(node)
 
