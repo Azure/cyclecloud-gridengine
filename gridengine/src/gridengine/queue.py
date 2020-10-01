@@ -35,6 +35,7 @@ class GridEngineQueue:
         self._pe_keys_cache: Dict[str, List[str]] = {}
         self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
         self.__slots = parse_slots(self.queue_config.get("slots", ""))
+        self.__seq_no = parse_seq_no(self.queue_config.get("seq_no", "0"))
 
         pe_list = parse_hostgroup_mapping(queue_config["pe_list"])
 
@@ -90,8 +91,9 @@ class GridEngineQueue:
         self.__bound_hostgroups: Dict[str, BoundHostgroup] = {}
 
         for hg_name in self.hostlist_groups:
+            hg_seq_no = self.seq_no.get(hg_name, self.seq_no.get(None, 0))  # type: ignore
             self.__bound_hostgroups[hg_name] = BoundHostgroup(
-                self, unbound_hostgroups[hg_name]
+                self, unbound_hostgroups[hg_name], hg_seq_no
             )
 
     @property
@@ -109,6 +111,10 @@ class GridEngineQueue:
     @property
     def slots(self) -> Dict[ht.Hostname, int]:
         return self.__slots
+
+    @property
+    def seq_no(self) -> Dict[str, int]:
+        return self.__seq_no
 
     @property
     def bound_hostgroups(self) -> Dict[str, BoundHostgroup]:
@@ -196,21 +202,30 @@ class GridEngineQueue:
 
 
 def parse_slots(slots_expr: str) -> Dict[str, int]:
-    slots: Dict[str, int] = {}
-
-    mapping = parse_hostgroup_mapping(slots_expr, filter_none=True)
-    for host, slots_as_list in mapping.items():
-        if len(slots_as_list) != 1:
-            raise AssertionError(
-                "Expected single int. Got %s. Whole expression\n%s"
-                % (slots_as_list, slots_expr),
-            )
-        slots[host] = int(slots_as_list[0])
+    slots = _parse_int_map(slots_expr)
 
     if None in slots:
         slots.pop(None)  # type: ignore
 
     return slots
+
+
+def parse_seq_no(seq_no_expr: str) -> Dict[str, int]:
+    return _parse_int_map(seq_no_expr)
+
+
+def _parse_int_map(expr: str) -> Dict[str, int]:
+    ret: Dict[str, int] = {}
+
+    mapping = parse_hostgroup_mapping(expr)
+    for host, as_list in mapping.items():
+        if len(as_list) != 1:
+            raise AssertionError(
+                "Expected single int. Got %s. Whole expression\n%s" % (as_list, expr),
+            )
+        ret[host] = int(as_list[0])
+
+    return ret
 
 
 def read_queues(

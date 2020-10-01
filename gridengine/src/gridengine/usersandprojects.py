@@ -101,9 +101,7 @@ class ProjectConstraint(BaseNodeConstraint):
         return {"gridengine-project-constraint": self.project}
 
     def __str__(self) -> str:
-        return "ProjectConstraint({} in {})".format(
-            self.project, ",".join(self.project_list)
-        )
+        return "ProjectConstraint({} in {})".format(self.project, self.project_list)
 
 
 class XProjectConstraint(BaseNodeConstraint):
@@ -136,6 +134,6 @@ class XProjectConstraint(BaseNodeConstraint):
         return {"gridengine-xproject-constraint": self.project}
 
     def __str__(self) -> str:
-        return "XProjectConstraint({} not in [{}])".format(
-            self.project, ",".join(self.xproject_list)
+        return "XProjectConstraint({} not in {})".format(
+            self.project, self.xproject_list
         )

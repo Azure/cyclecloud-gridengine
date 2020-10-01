@@ -92,7 +92,7 @@ def test_preprocess_configs() -> None:
 def test_hostgroup_constraint() -> None:
     ge_env = common_ge_env()
     hostgroup = Hostgroup("@htc.q", {}, members=["tux42"])
-    bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup)
+    bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup, 0)
     cons = driver.HostgroupConstraint(bound, "pg1")
 
     def new_node(
@@ -127,21 +127,21 @@ def test_hostgroup_constraint() -> None:
 
     # reject this because node.nodearray != lowmem
     hostgroup = Hostgroup("@hg1", {"slot_type": "lowmem"}, members=["tux42"])
-    bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup)
+    bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup, 0)
     cons = driver.HostgroupConstraint(bound, "pg1")
     result = cons.satisfied_by_node(new_node("pg1", "tux42", hostgroup))
     assert not result
     assert result.status == "InvalidOption"
 
     hostgroup = Hostgroup("@hg1", {"slot_type": "highmem"}, members=["tux42"])
-    bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup)
+    bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup, 0)
     cons = driver.HostgroupConstraint(bound, "pg1")
     assert cons.satisfied_by_node(new_node("pg1", "tux42", hostgroup))
 
     cons_list = []
     for pg in ["pg1", "pg2", "pg3"]:
         hostgroup = Hostgroup("@" + pg, {"slot_type": "highmem"}, members=["tux42"])
-        bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup)
+        bound = BoundHostgroup(ge_env.queues["htc.q"], hostgroup, 0)
         cons = driver.HostgroupConstraint(bound, pg)
         cons_list.append(cons)
 

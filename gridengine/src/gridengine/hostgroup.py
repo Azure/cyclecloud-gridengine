@@ -2,7 +2,7 @@ import typing
 from typing import Dict, List, Optional
 
 from hpc.autoscale.node import constraints as constraintslib
-from hpc.autoscale.node.constraints import And, Constraint, get_constraints
+from hpc.autoscale.node.constraints import And, Constraint, Never, get_constraints
 
 from gridengine.qbin import QBin
 from gridengine.usersandprojects import (
@@ -56,9 +56,12 @@ class BoundHostgroup:
     are included / excluded etc.
     """
 
-    def __init__(self, ge_queue: "GridEngineQueue", hostgroup: Hostgroup) -> None:
+    def __init__(
+        self, ge_queue: "GridEngineQueue", hostgroup: Hostgroup, seq_no: int
+    ) -> None:
         self.__queue = ge_queue
         self.__hostgroup = hostgroup
+        self.__seq_no = seq_no
 
     @property
     def name(self) -> str:
@@ -71,6 +74,10 @@ class BoundHostgroup:
     @property
     def queue(self) -> "GridEngineQueue":
         return self.__queue
+
+    @property
+    def seq_no(self) -> int:
+        return self.__seq_no
 
     def add_member(self, hostname: str) -> None:
         self.__hostgroup.add_member(hostname)
@@ -113,22 +120,41 @@ class BoundHostgroup:
         cons: List[Constraint] = []
         cons.extend(self.__hostgroup.constraints)
 
-        if self.user_list or self.xuser_list:
-            assert user  # TODO RDH
+        if self.user_list:
+            if user not in self.user_list:
+                msg = "User {} is invalid for {} on queue {}".format(
+                    user, self.name, self.queue.qname
+                )
+                return Never(msg)
 
-            if self.user_list:
-                cons.append(UserConstraint(user, self.user_list))
+            cons.append(UserConstraint(user, self.user_list))  # type: ignore
 
-            if self.xuser_list:
-                cons.append(XUserConstraint(user, self.xuser_list))
+        if self.xuser_list:
+            if user in self.xuser_list:
+                msg = "User {} is excluded for {} on queue {}".format(
+                    user, self.name, self.queue.qname
+                )
+                return Never(msg)
 
-        if self.projects or self.xprojects:
-            assert project  # TODO RDH
-            if self.projects:
-                cons.append(ProjectConstraint(project, self.projects))
+            cons.append(XUserConstraint(user, self.xuser_list))  # type: ignore
 
-            if self.xprojects:
-                cons.append(XProjectConstraint(project, self.xprojects))
+        if self.projects:
+            if project not in self.projects:
+                msg = "Project {} is invalid for {} on queue {}".format(
+                    project, self.name, self.queue.qname
+                )
+                return Never(msg)
+
+            cons.append(ProjectConstraint(project, self.projects))  # type: ignore
+
+        if self.xprojects:
+            if project in self.xprojects:
+                msg = "Project {} is excluded for {} on queue {}".format(
+                    project, self.name, self.queue.qname
+                )
+                return Never(msg)
+
+            cons.append(XProjectConstraint(project, self.xprojects))  # type: ignore
 
         if not cons:
             return None

@@ -78,11 +78,13 @@ def validate_hg_intersections(
                 "%s is not matched by any hostgroup. This is not an error.", bucket,
             )
         elif len(matches) > 1:
-            warn_function(
-                "%s is matched by more than one hostgroup %s. This is not an error.",
-                bucket,
-                ",".join(matches),
-            )
+            # seq_no will be used to determine ties
+            if not ge_env.scheduler.sort_by_seqno:
+                warn_function(
+                    "%s is matched by more than one hostgroup %s. This is not an error.",
+                    bucket,
+                    ",".join(matches),
+                )
     return failure
 
 

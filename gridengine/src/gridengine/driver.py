@@ -18,6 +18,7 @@ from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.constraints import (
     BaseNodeConstraint,
     NodeConstraint,
+    Or,
     XOr,
     register_parser,
 )
@@ -245,14 +246,14 @@ affinity    0.000000"""
         """
         """
         self._hostgroup_cache = {}
+
         if self.read_only:
             return []
 
         logging.getLogger("gridengine.driver").info("handle_join_cluster")
 
-        # TODO rethink this RDH
-        # self.handle_undraining(matched_nodes)
         managed_matched = [n for n in matched_nodes if n.managed]
+
         return self.add_nodes_to_cluster(managed_matched)
 
     def handle_post_join_cluster(self, nodes: List[Node]) -> List[Node]:
@@ -301,6 +302,7 @@ affinity    0.000000"""
         filtered = [
             n for n in nodes if n.exists and n.hostname and n.resources.get("ccnodeid")
         ]
+
         for node in filtered:
             if self._add_node_to_cluster(node, admin_hostnames, submit_hostnames):
                 ret.append(node)
@@ -338,7 +340,7 @@ affinity    0.000000"""
 
             self.add_exec_host(node)
             if not self._add_slots(node):
-                logging.fine("Adding slots to queues failed for %s", node)
+                logging.warning("Adding slots to queues failed for %s", node)
                 return False
             self._add_to_hostgroups(node, hostgroups)
             # finally enable it
@@ -563,7 +565,9 @@ license_oversubscription NONE""".format(
                 logging.fine("Not removing %s because keep_alive=true", node)
                 continue
             if not node.resources.get("ccnodeid"):
-                logging.fine("Not removing %s because it does not define ccnodeid", node)
+                logging.fine(
+                    "Not removing %s because it does not define ccnodeid", node
+                )
                 continue
             filtered.append(node)
 
@@ -1071,7 +1075,16 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
             )
 
         if len(queue_and_hostgroup_constraints) > 1:
-            constraints.append(XOr(*queue_and_hostgroup_constraints))
+            # if there is a weighting already in the scheduler config,
+            # we can resolve conflicts using this. Ties are undefined.
+            if ge_env.scheduler.sort_by_seqno:
+
+                queue_and_hostgroup_constraints = sorted(
+                    queue_and_hostgroup_constraints, key=lambda c: c.hostgroup.seq_no
+                )
+                constraints.append(Or(*queue_and_hostgroup_constraints))
+            else:
+                constraints.append(XOr(*queue_and_hostgroup_constraints))
         else:
             constraints.append(queue_and_hostgroup_constraints[0])
 
@@ -1319,6 +1332,7 @@ class HostgroupConstraint(BaseNodeConstraint):
             "hostgroup-and-pg": {
                 "hostgroup": self.hostgroup.name,
                 "placement-group": self.placement_group,
+                "seq-no": self.hostgroup.seq_no,
                 "constraints": self.get_children(),
             }
         }
