@@ -107,6 +107,9 @@ def autoscale_grid_engine(
     unmatched_for_5_mins = demand_calculator.find_unmatched_for(at_least=idle_timeout)
     timed_out_booting = demand_calculator.find_booting(at_least=boot_timeout)
 
+    # I don't care about nodes that have keep_alive=true
+    timed_out_booting = [n for n in timed_out_booting if not n.keep_alive]
+
     timed_out_to_deleted = []
     unmatched_nodes_to_delete = []
 
