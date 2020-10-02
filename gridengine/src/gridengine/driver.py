@@ -707,6 +707,9 @@ license_oversubscription NONE""".format(
         return str(self)
 
 
+_LOGGED_WARNINGS: Set[str] = set()
+
+
 def _get(e: Any, attr_name: str) -> Optional[str]:
     child = e.find(attr_name)
     if child is None:
@@ -764,7 +767,6 @@ def _parse_scheduler_nodes(
     compute_nodes: Dict[str, SchedulerNode] = {}
 
     elems = list(root.findall("queue_info/Queue-List"))
-    log_warnings: Set[str] = set()
 
     def keyfunc(e: Element) -> str:
         try:
@@ -827,11 +829,11 @@ def _parse_scheduler_nodes(
             def filter_if_time(c: Complex) -> bool:
 
                 if c.complex_type in ["TIME"]:
-                    if resource_name not in log_warnings:
+                    if resource_name not in _LOGGED_WARNINGS:
                         logging.warning(
                             "Ignoring TIME resource %s on job %s", resource_name
                         )
-                    log_warnings.add(resource_name)
+                    _LOGGED_WARNINGS.add(resource_name)
                     return True
                 return False
 
@@ -841,13 +843,13 @@ def _parse_scheduler_nodes(
                     continue
 
                 resources[resource_name] = text
-                if resource_name not in log_warnings:
+                if resource_name not in _LOGGED_WARNINGS:
                     logging.warning(
                         "Unknown resource %s. This will be treated as a string internally and "
                         + "may cause issues with grid engine's ability to schedule this job.",
                         resource_name,
                     )
-                    log_warnings.add(resource_name)
+                    _LOGGED_WARNINGS.add(resource_name)
             else:
 
                 if filter_if_time(complex):
@@ -936,8 +938,6 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
         x for x in requested_queues if ge_env.queues[x].autoscale_enabled
     ]
 
-    log_warnings: Set[str] = set()
-
     job_id = _getr(jijle, "JB_job_number")
     slots = int(_getr(jijle, "slots"))
 
@@ -973,6 +973,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
 
     job_resources: Dict[str, Any] = {}
     project = _get(jijle, "JB_project")
+
     owner = _get(jijle, "JB_owner")
 
     for req in jijle.iter("hard_request"):
@@ -985,9 +986,9 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
         # we currently won't do anything with any TIME complex type
         def filter_if_time(c: Complex) -> bool:
             if c.complex_type in ["TIME"]:
-                if resource_name not in log_warnings:
+                if resource_name not in _LOGGED_WARNINGS:
                     logging.warning("Ignoring TIME resource %s", resource_name)
-                log_warnings.add(resource_name)
+                _LOGGED_WARNINGS.add(resource_name)
                 return True
             return False
 
@@ -998,13 +999,13 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
             if unfiltered_complex and filter_if_time(unfiltered_complex):
                 continue
 
-            if resource_name not in log_warnings:
+            if resource_name not in _LOGGED_WARNINGS:
                 logging.warning(
                     "Unknown resource %s. This will be ignored for autoscaling purposes and "
                     + "may cause issues with grid engine's ability to schedule this job.",
                     resource_name,
                 )
-                log_warnings.add(resource_name)
+                _LOGGED_WARNINGS.add(resource_name)
             continue
         else:
             req_value = complex.parse(req.text)
