@@ -18,6 +18,7 @@ from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import new_node_manager
 from hpc.autoscale.results import (
     DefaultContextHandler,
+    EarlyBailoutResult,
     MatchResult,
     register_result_handler,
 )
@@ -466,7 +467,15 @@ class ReraiseAssertionInterpreter(code.InteractiveConsole):
         return code.InteractiveConsole.showtraceback(self)
 
 
-def analyze(config: Dict, job_id: str) -> None:
+def analyze(config: Dict, job_id: str, wide: bool = False) -> None:
+    if not wide:
+        try:
+            _, columns_str = os.popen("stty size", "r").read().split()
+        except Exception:
+            columns_str = "120"
+        columns = int(columns_str)
+    else:
+        columns = 120
 
     ctx = DefaultContextHandler("[demand-cli]")
 
@@ -479,12 +488,15 @@ def analyze(config: Dict, job_id: str) -> None:
     key = "[job {}]".format(job_id)
     results = ctx.by_context[key]
     for result in results:
-        if isinstance(result, MatchResult) and result:
+        if isinstance(result, (EarlyBailoutResult, MatchResult)) and result:
             continue
 
         if isinstance(result, HostgroupConstraint) and not result:
             continue
-        print(result.message)
+        if wide:
+            print(result.message)
+        else:
+            print(result.message[:columns])
     # autoscaler.print_demand(config, demand_result, output_columns, output_format)
 
 
@@ -725,6 +737,7 @@ def main(argv: Iterable[str] = None) -> None:
     add_parser("shell", shell)
     analyze_parser = add_parser("analyze", analyze)
     analyze_parser.add_argument("--job-id", "-j", required=True)
+    analyze_parser.add_argument("--wide", "-w", action="store_true", default=False)
 
     parser.usage = help_msg.getvalue()
     args = parser.parse_args()
