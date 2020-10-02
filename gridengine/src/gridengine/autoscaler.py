@@ -259,6 +259,10 @@ def calculate_demand(
             ctx_handler.set_context("[job {}]".format(job.name))
         demand_calculator.add_job(job)
 
+    for node in demand_calculator.node_mgr.get_nodes():
+        node.available["hostgroups"] = node.software_configuration[
+            "gridengine_hostgroups"
+        ]
     return demand_calculator
 
 
@@ -277,6 +281,7 @@ def print_demand(
                 "name",
                 "hostname",
                 "job_ids",
+                "*hostgroups",
                 "exists",
                 "required",
                 "managed",
