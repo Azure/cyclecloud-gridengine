@@ -3,7 +3,7 @@
 INSTALL_PYTHON3=0
 USE_JETPACK_PYTHON3=0
 INSTALL_VIRTUALENV=0
-VENV=/opt/cycle/cyclecloud-gridengine/venv
+VENV=/opt/cycle/gridengine/venv
 
 
 while (( "$#" )); do
