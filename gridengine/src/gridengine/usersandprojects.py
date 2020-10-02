@@ -23,11 +23,7 @@ class UserConstraint(BaseNodeConstraint):
         return SatisfiedResult("InvalidUser", self, node, reasons=[msg],)
 
     def do_decrement(self, node: Node) -> bool:
-        user_list = node.resources.get("owner")
-        if user_list is None:
-            node.resources["owner"] = user_list = self.user_list
-
-        assert self.user in user_list
+        assert self.user in self.user_list
         return True
 
     def to_dict(self) -> Dict:
@@ -57,10 +53,7 @@ class XUserConstraint(BaseNodeConstraint):
         return SatisfiedResult("ExcludedUser", self, node, reasons=[msg],)
 
     def do_decrement(self, node: Node) -> bool:
-        xuser_list = node.resources.get("xowner")
-        if xuser_list is None:
-            node.resources["xowner"] = xuser_list = self.xuser_list
-        assert self.user not in xuser_list
+        assert self.user not in self.xuser_list
         return True
 
     def to_dict(self) -> Dict:
@@ -91,10 +84,7 @@ class ProjectConstraint(BaseNodeConstraint):
         return SatisfiedResult("InvalidUser", self, node, reasons=[msg],)
 
     def do_decrement(self, node: Node) -> bool:
-        projects = node.resources.get("project")
-        if projects is None:
-            node.resources["project"] = projects = self.project_list
-        assert self.project in projects
+        assert self.project in self.project_list
         return True
 
     def to_dict(self) -> Dict:
@@ -124,10 +114,7 @@ class XProjectConstraint(BaseNodeConstraint):
         return SatisfiedResult("ExcludedProject", self, node, reasons=[msg],)
 
     def do_decrement(self, node: Node) -> bool:
-        xprojects = node.resources.get("xproject")
-        if xprojects is None:
-            node.resources["xproject"] = xprojects = self.xproject_list
-        assert self.project not in xprojects
+        assert self.project not in self.xproject_list
         return True
 
     def to_dict(self) -> Dict:
