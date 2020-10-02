@@ -6,6 +6,7 @@ from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
 from hpc.autoscale.util import partition_single
 
+from gridengine.complex import parse_queue_complex_values
 from gridengine.hostgroup import BoundHostgroup, Hostgroup
 from gridengine.qbin import QBin
 from gridengine.util import parse_ge_config, parse_hostgroup_mapping
@@ -21,9 +22,11 @@ class GridEngineQueue:
         queue_config: Dict,
         pes: Dict[str, "ParallelEnvironment"],
         unbound_hostgroups: Dict[str, Hostgroup],
+        complex_values: Dict[str, Dict],
         autoscale_enabled: bool = True,
     ) -> None:
         self.queue_config = queue_config
+        self.complex_values = complex_values
 
         self.autoscale_enabled = autoscale_enabled
         assert isinstance(self.queue_config["hostlist"], str), self.queue_config[
@@ -232,6 +235,7 @@ def read_queues(
     autoscale_config: Dict,
     pes: Dict[str, "ParallelEnvironment"],
     hostgroups: List[Hostgroup],
+    complexes: Dict[str, "Complex"],
     qbin: QBin,
 ) -> Dict[str, GridEngineQueue]:
     queues = {}
@@ -243,13 +247,16 @@ def read_queues(
     unbound_hostgroups = partition_single(hostgroups, lambda h: h.name)
 
     for qname in qnames:
+
         lines = qbin.qconf(["-sq", qname]).splitlines()
         queue_config = parse_ge_config(lines)
         autoscale_enabled = autoscale_queues_config.get(queue_config["qname"], {}).get(
             "autoscale_enabled", True
         )
+        expr = queue_config.get("complex_values", "NONE")
+        complex_values = parse_queue_complex_values(expr, complexes, qname)
         queues[qname] = GridEngineQueue(
-            queue_config, pes, unbound_hostgroups, autoscale_enabled
+            queue_config, pes, unbound_hostgroups, complex_values, autoscale_enabled
         )
 
     return queues
@@ -261,7 +268,9 @@ def new_gequeue(
     pe_list: str,
     slots_expr: str,
     ge_env: "GridEngineEnvironment",
+    complexes: Optional[Dict[str, Dict]] = None,
 ) -> GridEngineQueue:
+    complexes = complexes or {}
     queue_config = {
         "qname": qname,
         "hostlist": hostlist,
@@ -269,4 +278,4 @@ def new_gequeue(
         "slots": slots_expr,
     }
 
-    return GridEngineQueue(queue_config, ge_env.pes, ge_env.hostgroups)
+    return GridEngineQueue(queue_config, ge_env.pes, ge_env.hostgroups, complexes)

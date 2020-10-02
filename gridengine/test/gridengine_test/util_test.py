@@ -43,12 +43,12 @@ def test_ge_list_tokenizing() -> None:
 
     assert ["mpi", "mpislots",] == _tokenize_ge_list("mpi mpislots")
 
-    assert ["@mpihosts=mpi",] == _tokenize_ge_list("[@mpihosts=mpi]")
+    assert ["[@mpihosts=mpi]",] == _tokenize_ge_list("[@mpihosts=mpi]")
 
-    assert ["NONE", "@mpihosts=mpi",] == _tokenize_ge_list("NONE,[@mpihosts=mpi]")
+    assert ["NONE", "[@mpihosts=mpi]",] == _tokenize_ge_list("NONE,[@mpihosts=mpi]")
 
     assert [
         "NONE",
-        "@mpihosts=mpi mpislots",
-        "@smphosts=smp1,smp2",
+        "[@mpihosts=mpi mpislots]",
+        "[@smphosts=smp1,smp2]",
     ] == _tokenize_ge_list("NONE,[@mpihosts=mpi mpislots],[@smphosts=smp1,smp2]")

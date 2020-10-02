@@ -2,7 +2,11 @@ from unittest import mock
 
 from hpc.autoscale.hpctypes import Memory
 
-from gridengine.complex import Complex, read_complexes
+from gridengine.complex import (
+    Complex,
+    parse_queue_complex_values,
+    read_complexes,
+)
 from gridengine.qbin import QBinImpl
 
 
@@ -187,3 +191,25 @@ virtual_used        vu           MEMORY      >=      YES         NO         0   
         {"gridengine": {"relevant_complexes": ["h", "mfree"]}}, qbin
     )
     assert set(complexes.keys()) == set(["h", "hostname", "mfree", "m_mem_free"])
+
+
+def test_complex_parsing_of_queue() -> None:
+    pcpu = Complex("pcpu", "pcpu", "INT", "<=", True, True, "1", 0)
+    pmem = Complex("pmem", "pmem", "INT", "<=", True, True, "1", 0)
+    ldf = Complex("ldf", "ldf", "BOOL", "<=", True, True, "1", 0)
+    c = {"pcpu": pcpu, "pmem": pmem, "ldf": ldf}
+    f = parse_queue_complex_values
+    assert {
+        None: {},
+        "@ldek5": {"pcpu": 24, "pmem": 376, "ldf": True},
+        "@lhaa5": {"pcpu": 4, "pmem": 32},
+    } == f("None,[@ldek5=pcpu=24,pmem=376,ldf=1],[@lhaa5=pcpu=4,pmem=32]", c, "q1")
+
+    assert {
+        None: {"pcpu": 2, "pmem": 4},
+        "@ldek5": {"pcpu": 24, "pmem": 376, "ldf": True},
+        "@lhaa5": {"pcpu": 4, "pmem": 32},
+    } == f(
+        "pcpu=2,pmem=4,[@ldek5=pcpu=24,pmem=376,ldf=1],[@lhaa5=pcpu=4,pmem=32]", c, "q1"
+    )
+

@@ -5,6 +5,7 @@ from hpc.autoscale import hpctypes as ht
 from hpc.autoscale.util import partition_single
 
 from gridengine.qbin import QBin
+from gridengine.util import parse_hostgroup_mapping
 
 
 class Complex:
@@ -29,6 +30,7 @@ class Complex:
         self.__logged_type_warning = False
         self.__logged_parse_warning = False
 
+        self.default = None
         self.default = self.parse(default or "NONE")
 
     def parse(self, value: str) -> Optional[Any]:
@@ -182,3 +184,35 @@ def _parse_complexes(
     shortcut_dict = partition_single(complexes, lambda x: x.shortcut)
     ret.update(shortcut_dict)
     return ret
+
+
+def parse_queue_complex_values(
+    expr: str, complexes: Dict[str, Complex], qname: str
+) -> Dict[str, Dict[str, Dict]]:
+    raw: Dict[str, List[str]] = parse_hostgroup_mapping(expr)
+    ret: Dict[str, Dict] = {}
+
+    for hostgroup, sub_exprs in raw.items():
+        if hostgroup not in ret:
+            ret[hostgroup] = {}
+        d = ret[hostgroup]
+
+        for sub_expr in sub_exprs:
+            if sub_expr is None:
+                sub_expr = "NONE"
+
+            if "=" not in sub_expr:
+                continue
+
+            sub_expr = sub_expr.strip()
+            complex_name, value_expr = sub_expr.split("=", 1)
+
+            c = complexes.get(complex_name)
+            if not c:
+                logging.error(
+                    "Could not find complex %s defined in queue %s", complex_name, qname
+                )
+                continue
+            d[complex_name] = c.parse(value_expr)
+    return ret
+

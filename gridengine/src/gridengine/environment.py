@@ -131,7 +131,7 @@ def from_qconf(
 
     unfiltered_complexes = read_complexes({}, qbin)
 
-    queues = read_queues(autoscale_config, pes, hostgroups, qbin)
+    queues = read_queues(autoscale_config, pes, hostgroups, complexes, qbin)
 
     ge_env = GridEngineEnvironment(
         scheduler,

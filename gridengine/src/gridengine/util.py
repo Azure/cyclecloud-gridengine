@@ -117,21 +117,34 @@ def parse_hostgroup_mapping(
 
     toks = _tokenize_ge_list(expr)
 
+    def _add_default_mapping(tok: str) -> None:
+        sub_toks = split_ge_list(tok)
+        # the type checker does not like default_hostgroups, since it is looking at the type
+        # of the argument
+        for hg in default_hostgroups:  # type: ignore
+            if hg not in mapping:
+                mapping[hg] = []
+            mapping[hg].extend(sub_toks)
+
     for tok in toks:
+        tok = tok.strip()
+
+        if not tok:
+            continue
+
+        if "[" not in tok:
+            _add_default_mapping(tok)
+            continue
+
         tok = tok.replace("[", "").replace("]", "")
         if filter_none and tok.lower() == "none":
             continue
 
         if "=" not in tok:
-            sub_toks = split_ge_list(tok)
-
-            for hg in default_hostgroups:
-                if hg not in mapping:
-                    mapping[hg] = []
-                mapping[hg].extend(sub_toks)
+            _add_default_mapping(tok)
             continue
 
-        fqdn, sub_expr = tok.split("=")
+        fqdn, sub_expr = tok.split("=", 1)
 
         if not fqdn.startswith("@"):
             hostgroup = fqdn.strip().lower().split(".")[0]
@@ -164,8 +177,10 @@ def _tokenize_ge_list(expr: str) -> List[str]:
             buf.write(c)
         elif c == "[":
             in_left_bracket = True
+            buf.write(c)
         elif c == "]":
             in_left_bracket = False
+            buf.write(c)
         elif c in [" ", ","] and not in_left_bracket:
             buf = append_if_token()
         else:
