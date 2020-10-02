@@ -1081,7 +1081,8 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
             if ge_env.scheduler.sort_by_seqno:
 
                 queue_and_hostgroup_constraints = sorted(
-                    queue_and_hostgroup_constraints, key=lambda c: c.hostgroup.seq_no
+                    queue_and_hostgroup_constraints,
+                    key=lambda c: (c.hostgroup.seq_no, c.hostgroup.name),
                 )
                 constraints.append(Or(*queue_and_hostgroup_constraints))
             else:
