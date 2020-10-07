@@ -62,6 +62,22 @@ class BoundHostgroup:
         self.__queue = ge_queue
         self.__hostgroup = hostgroup
         self.__seq_no = seq_no
+        self.__user_list = (self.__queue.user_lists.get(None) or []) + (  # type: ignore
+            self.__queue.user_lists.get(self.name) or []
+        )
+        self.__xuser_list = (self.__queue.xuser_lists.get(None) or []) + (  # type: ignore
+            self.__queue.xuser_lists.get(self.name) or []
+        )
+        self.__projects = (self.__queue.projects.get(None) or []) + (  # type: ignore
+            self.__queue.projects.get(self.name) or []
+        )
+        self.__xprojects = (self.__queue.xprojects.get(None) or []) + (  # type: ignore
+            self.__queue.xprojects.get(self.name) or []
+        )
+        self.__user_list = [x for x in self.__user_list if x is not None]
+        self.__xuser_list = [x for x in self.__xuser_list if x is not None]
+        self.__projects = [x for x in self.__projects if x is not None]
+        self.__xprojects = [x for x in self.__xprojects if x is not None]
 
     @property
     def name(self) -> str:
@@ -88,27 +104,19 @@ class BoundHostgroup:
 
     @property
     def user_list(self) -> List[str]:
-        return (self.__queue.user_lists.get(None) or []) + (  # type: ignore
-            self.__queue.user_lists.get(self.name) or []
-        )
+        return self.__user_list
 
     @property
     def xuser_list(self) -> List[str]:
-        return (self.__queue.xuser_lists.get(None) or []) + (  # type: ignore
-            self.__queue.xuser_lists.get(self.name) or []
-        )
+        return self.__xuser_list
 
     @property
     def projects(self) -> List[str]:
-        return (self.__queue.projects.get(None) or []) + (  # type: ignore
-            self.__queue.projects.get(self.name) or []
-        )
+        return self.__projects
 
     @property
     def xprojects(self) -> List[str]:
-        return (self.__queue.xprojects.get(None) or []) + (  # type: ignore
-            self.__queue.xprojects.get(self.name) or []
-        )
+        return self.__xprojects
 
     def make_constraint(
         self, user: Optional[str] = None, project: Optional[str] = None

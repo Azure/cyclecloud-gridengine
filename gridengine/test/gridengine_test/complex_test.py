@@ -1,13 +1,20 @@
+from typing import Optional, Union
 from unittest import mock
 
+import pytest
 from hpc.autoscale.hpctypes import Memory
+from hpc.autoscale.job.schedulernode import SchedulerNode
 
 from gridengine.complex import (
     Complex,
+    make_quota_bound_consumable_constraint,
     parse_queue_complex_values,
+    process_quotas,
     read_complexes,
 )
 from gridengine.qbin import QBinImpl
+from gridengine.util import json_dump
+from gridengine_test.autoscaler_test import common_ge_env
 
 
 def test_int_parsing() -> None:
@@ -213,3 +220,215 @@ def test_complex_parsing_of_queue() -> None:
         "pcpu=2,pmem=4,[@ldek5=pcpu=24,pmem=376,ldf=1],[@lhaa5=pcpu=4,pmem=32]", c, "q1"
     )
 
+
+def test_process_numeric_quotas() -> None:
+    # test a node that is part of multiple hostgroups
+    # what about default values in complexes file?
+    N = Union[int, float]
+
+    def run_test(
+        ctype: str,
+        node_pcpu: Optional[N],
+        hg_pcpu: N,
+        q_default_pcpu: N,
+        complex_default: Optional[N],
+    ) -> SchedulerNode:
+        cast = float if ctype == "DOUBLE" else int
+        node_res = {}
+        if node_pcpu is not None:
+            node_res["pcpu"] = cast(node_pcpu)
+            node_res["p"] = cast(node_pcpu)
+
+        node = SchedulerNode("tux", node_res)
+        ge_env = common_ge_env()
+
+        q = ge_env.queues["hpc.q"]
+        complex_default_str = (
+            "NONE" if complex_default is None else str(complex_default)
+        )
+        ge_env.complexes["pcpu"] = Complex(
+            "pcpu", "p", ctype, "<=", True, True, complex_default_str, 0
+        )
+
+        q.complex_values[None] = {"pcpu": cast(q_default_pcpu)}
+        q.complex_values["@hpc.q"] = {"pcpu": cast(hg_pcpu)}
+
+        assert node.available.get("pcpu") == node_pcpu
+        process_quotas(node, ge_env.complexes, ["@hpc.q"], [q])
+        return node
+
+    for ctype in ["INT", "RSMAP", "DOUBLE", "MEMORY"]:
+        node = run_test(ctype, 12, 8, 10, 0)
+        assert node.available["pcpu"] == 12
+        assert node.available["p"] == 12
+        json_dump(node.available)
+        assert node.available["hpc.q@pcpu"] == 8
+        assert node.available["hpc.q@p"] == 8
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["pcpu"] == 8
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["p"] == 8
+
+        node = run_test(ctype, 12, 10, 8, 0)
+        # assert node.available["pcpu"] == 12
+        assert node.available["hpc.q@pcpu"] == 10
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["pcpu"] == 10
+
+        node = run_test(ctype, 6, 8, 10, 0)
+        # assert node.available["pcpu"] == 6
+        assert node.available["hpc.q@pcpu"] == 6
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["pcpu"] == 6
+
+        node = run_test(ctype, None, 8, 10, 0)
+        # assert node.available["pcpu"] == 8
+        assert node.available["hpc.q@pcpu"] == 8
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["pcpu"] == 8
+
+
+# fix asap
+@pytest.mark.skip
+def test_process_string_quotas() -> None:
+    def run_test(
+        ctype: str,
+        node_lic: Optional[str],
+        hg_lic: str,
+        q_default_lic: str,
+        complex_default: Optional[str],
+    ) -> SchedulerNode:
+        def cast(x: Optional[str]) -> Optional[str]:
+            if x is None:
+                return None
+            if ctype == "CSTRING":
+                return x.lower()
+            return x
+
+        node_res = {}
+        if node_lic is not None:
+            node_res["lic"] = cast(node_lic)
+            node_res["l"] = cast(node_lic)
+
+        node = SchedulerNode("tux", node_res)
+        ge_env = common_ge_env()
+
+        q = ge_env.queues["hpc.q"]
+        complex_default_str = (
+            "NONE" if complex_default is None else str(complex_default)
+        )
+        ge_env.complexes["lic"] = Complex(
+            "lic", "l", ctype, "<=", True, True, complex_default_str, 0
+        )
+
+        q.complex_values[None] = {"lic": cast(q_default_lic)}
+        q.complex_values["@hpc.q"] = {"lic": cast(hg_lic)}
+
+        assert node.available.get("lic") == node_lic
+        process_quotas(node, ge_env.complexes, ["@hpc.q"], [q])
+        return node
+
+    for ctype in ["STRING", "RESTRING", "HOST", "CSTRING"]:
+        node = run_test(ctype, "abc", "bcd", "cde", None)
+        # assert node.available["lic"] == "abc"
+        assert node.available["hpc.q@lic"] == "abc"
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["lic"] == "abc"
+
+        node = run_test(ctype, None, "bcd", "cde", None)
+        # assert node.available["lic"] == "bcd"
+        assert node.available["hpc.q@lic"] == "bcd"
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["lic"] == "bcd"
+
+        node = run_test(ctype, None, None, None, "xyz")  # type: ignore
+        # assert node.available["lic"] == "xyz"
+        assert node.available["hpc.q@lic"] == "xyz"
+        assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["lic"] == "xyz"
+
+
+def test_quota_bool_resource() -> None:
+    def run_test(
+        ctype: str,
+        node_lic: Optional[bool],
+        hg_lic: bool,
+        q_default_lic: bool,
+        complex_default: Optional[bool],
+    ) -> SchedulerNode:
+        node_res = {}
+        if node_lic is not None:
+            node_res["lic"] = node_lic
+            node_res["l"] = node_lic
+
+        node = SchedulerNode("tux", node_res)
+        ge_env = common_ge_env()
+
+        q = ge_env.queues["hpc.q"]
+        complex_default_str = (
+            "NONE" if complex_default is None else str(complex_default)
+        )
+        ge_env.complexes["lic"] = Complex(
+            "lic", "l", ctype, "<=", True, True, complex_default_str, 0
+        )
+
+        q.complex_values[None] = {"lic": q_default_lic}
+        q.complex_values["@hpc.q"] = {"lic": hg_lic}
+
+        assert node.available.get("lic") == node_lic
+        process_quotas(node, ge_env.complexes, ["@hpc.q"], [q])
+        return node
+
+    node = run_test("BOOL", True, False, False, None)
+    # assert node.available["lic"] is True
+    assert node.available["hpc.q@lic"] is True
+    assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["lic"] is True
+
+    node = run_test("BOOL", None, False, False, None)
+    # assert node.available["lic"] is False
+    assert node.available["hpc.q@lic"] is False
+    assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["lic"] is False
+
+
+def test_quota_bound_resource_number() -> None:
+    ge_env = common_ge_env()
+    ge_env.queues["hpc.q"].complex_values[None] = {"pcpu": 6}
+    ge_env.queues["htc.q"].complex_values[None] = {"pcpu": 4}
+
+    node = SchedulerNode("tux", resources={"pcpu": 8})
+
+    node.available["hpc.q@pcpu"] = 6
+    node.available["htc.q@pcpu"] = 4
+
+    c1 = make_quota_bound_consumable_constraint("pcpu", 1, "hpc.q", ge_env)
+    c2 = make_quota_bound_consumable_constraint("pcpu", 2, "htc.q", ge_env)
+    # imagine the node has 8 pcpus, but hpc.q limits it to 6, and htc.q to 4
+    assert node.available["pcpu"] == 8
+
+    assert node.available["hpc.q@pcpu"] == 6
+    assert node.available["htc.q@pcpu"] == 4
+
+    # the total amount and hpc.q are decremented, htc.q untouched
+    assert c1.satisfied_by_node(node)
+    assert c1.do_decrement(node)
+    assert node.available["pcpu"] == 7
+    assert node.available["hpc.q@pcpu"] == 5
+    assert node.available["htc.q@pcpu"] == 4
+
+    # the total amount and htc.q are decremented, hpc.q untouched
+    assert c2.satisfied_by_node(node)
+    assert c2.do_decrement(node)
+    assert node.available["pcpu"] == 5
+    assert node.available["hpc.q@pcpu"] == 5
+    assert node.available["htc.q@pcpu"] == 2
+
+    # the total amount and htc.q are decremented, hpc.q is floored
+    # to the total amount
+    assert c2.satisfied_by_node(node)
+    assert c2.do_decrement(node)
+    assert node.available["pcpu"] == 3
+    assert node.available["hpc.q@pcpu"] == 3
+    assert node.available["htc.q@pcpu"] == 0
+
+    # take out the remaining amount
+    assert not c2.satisfied_by_node(node)
+    for _ in range(3):
+        assert c1.satisfied_by_node(node)
+        assert c1.do_decrement(node)
+
+    assert not c1.satisfied_by_node(node)
+    assert node.available["pcpu"] == 0
+    assert node.available["hpc.q@pcpu"] == 0
+    assert node.available["htc.q@pcpu"] == 0

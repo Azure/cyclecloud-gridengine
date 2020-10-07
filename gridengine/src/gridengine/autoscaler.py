@@ -14,6 +14,7 @@ from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import SingletonLock, json_load
 
 from gridengine import environment as envlib
+from gridengine.complex import make_node_preprocessor
 from gridengine.environment import GridEngineEnvironment
 
 if typing.TYPE_CHECKING:
@@ -186,6 +187,7 @@ def new_demand_calculator(
         node_history=node_history,
         node_queue=ge_driver.new_node_queue(),
         singleton_lock=singleton_lock,  # it will handle the none case
+        node_preprocessor=make_node_preprocessor(ge_env),
     )
 
     for name, default_complex in ge_env.complexes.items():

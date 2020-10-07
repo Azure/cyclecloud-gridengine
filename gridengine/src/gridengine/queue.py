@@ -1,6 +1,6 @@
 import re
 import typing
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
@@ -12,6 +12,7 @@ from gridengine.qbin import QBin
 from gridengine.util import parse_ge_config, parse_hostgroup_mapping
 
 if typing.TYPE_CHECKING:
+    from gridengine.complex import Complex  # noqa: F401
     from gridengine.environment import GridEngineEnvironment
     from gridengine.parallel_environments import ParallelEnvironment  # noqa: F401
 
@@ -38,6 +39,12 @@ class GridEngineQueue:
         self._pe_keys_cache: Dict[str, List[str]] = {}
         self.__parallel_environments: Dict[str, "ParallelEnvironment"] = {}
         self.__slots = parse_slots(self.queue_config.get("slots", ""))
+
+        for hg, slots in self.__slots.items():
+            if hg not in self.complex_values:
+                self.complex_values[hg] = {}
+            self.complex_values[hg]["slots"] = slots
+
         self.__seq_no = parse_seq_no(self.queue_config.get("seq_no", "0"))
 
         pe_list = parse_hostgroup_mapping(queue_config["pe_list"])
@@ -75,7 +82,7 @@ class GridEngineQueue:
                     self.get_hostgroups_for_pe(pe.name)
                 )
 
-        self.__ht_hostgroups = list(all_host_groups)
+        self.__ht_hostgroups = [x for x in list(all_host_groups) if x.startswith("@")]
 
         self.user_lists = parse_hostgroup_mapping(
             queue_config.get("user_lists") or "", self.hostlist_groups, filter_none=True
@@ -122,6 +129,33 @@ class GridEngineQueue:
     @property
     def bound_hostgroups(self) -> Dict[str, BoundHostgroup]:
         return self.__bound_hostgroups
+
+    def get_quota(self, complex_name: str, hostgroup: str) -> Optional[Any]:
+        """
+        With quotas, the default quota is not inherited if a hostgroup is defined. i.e.
+        > complex_values testbool=true
+        > qstat -f -F testbool
+        ---------------------------------------------------------------------------------
+        testq@ip-0A010009.m1qiv4tr1vqe BIP   0/0/2          0.01     lx-amd64
+        qf:testbool=1
+
+        > complex_values testbool=true,[@Standard_A2=pcpu=2]
+        > qstat -f -F testbool
+        ---------------------------------------------------------------------------------
+        testq@ip-0A010009.m1qiv4tr1vqe BIP   0/0/2          0.00     lx-amd64
+
+        So simply defining [@Standard_2=] with anything removes the default
+        """
+        cv_for_hg = self.complex_values.get(hostgroup)
+        if cv_for_hg:
+            # if the hostgroup is defined, I don't care what the non-hg versions
+            return cv_for_hg.get(complex_name)
+
+        default_cv = self.complex_values.get(None)  # type: ignore
+        if default_cv and complex_name in default_cv:
+            return default_cv[complex_name]
+
+        return None
 
     def has_pe(self, pe_name: str) -> bool:
         return bool(self._pe_keys(pe_name))
@@ -207,8 +241,8 @@ class GridEngineQueue:
 def parse_slots(slots_expr: str) -> Dict[str, int]:
     slots = _parse_int_map(slots_expr)
 
-    if None in slots:
-        slots.pop(None)  # type: ignore
+    # if None in slots:
+    #     slots.pop(None)  # type: ignore
 
     return slots
 

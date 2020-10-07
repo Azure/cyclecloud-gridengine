@@ -1,11 +1,26 @@
-from typing import Any, Dict, List, Optional
+import re
+import typing
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
+from hpc.autoscale.node.bucket import NodeBucket
+from hpc.autoscale.node.constraints import (
+    And,
+    BaseNodeConstraint,
+    MinResourcePerNode,
+    NodeConstraint,
+)
+from hpc.autoscale.node.node import Node
+from hpc.autoscale.results import Result
 from hpc.autoscale.util import partition_single
 
 from gridengine.qbin import QBin
-from gridengine.util import parse_hostgroup_mapping
+from gridengine.util import get_node_hostgroups, parse_hostgroup_mapping
+
+if typing.TYPE_CHECKING:
+    from gridengine.queue import GridEngineQueue
+    from gridengine.environment import GridEngineEnvironment
 
 
 class Complex:
@@ -29,6 +44,7 @@ class Complex:
         self.urgency = urgency
         self.__logged_type_warning = False
         self.__logged_parse_warning = False
+        self.__is_numeric = self.complex_type in ["INT", "RSMAP", "DOUBLE", "MEMORY"]
 
         self.default = None
         self.default = self.parse(default or "NONE")
@@ -90,6 +106,10 @@ class Complex:
                 )
                 self.__logged_parse_warning = True
             return value
+
+    @property
+    def is_numeric(self) -> bool:
+        return self.__is_numeric
 
     def __str__(self) -> str:
         return "Complex(name={}, shortcut={}, type={}, default={})".format(
@@ -209,10 +229,180 @@ def parse_queue_complex_values(
 
             c = complexes.get(complex_name)
             if not c:
-                logging.error(
+                logging.debug(
                     "Could not find complex %s defined in queue %s", complex_name, qname
                 )
                 continue
             d[complex_name] = c.parse(value_expr)
     return ret
 
+
+def process_quotas(
+    node: Node,
+    complexes: Dict[str, Complex],
+    hostgroups: List[str],
+    ge_queues: List["GridEngineQueue"],
+) -> None:
+    for ge_queue in ge_queues:
+
+        for c in complexes.values():
+
+            names = [c.name] if c.name == c.shortcut else [c.name, c.shortcut]
+            for hg in hostgroups:
+                for resource_name in names:
+                    _process_quota(c, resource_name, node, ge_queue, hg)
+
+
+def _process_quota(
+    c: Complex,
+    resource_name: str,
+    node: Node,
+    ge_queue: "GridEngineQueue",
+    hostgroup: str,
+) -> None:
+    namespaced_key = "{}@{}".format(ge_queue.qname, resource_name)
+    if namespaced_key in node.available:
+        return
+
+    host_value = node.available.get(resource_name)
+    # if no quota is defined, then use the host_value (which may also be undefined)
+    quota = ge_queue.get_quota(c.name, hostgroup)
+
+    if quota is None:
+        quota = host_value
+
+    if quota is None:
+        return
+
+    # host value isn't defined, then set it to the quota
+    if host_value is None:
+        host_value = quota
+
+    if c.is_numeric:
+        quota = min(quota, host_value)  # type: ignore
+    elif host_value:
+        quota = host_value
+
+    quotas_dict = node.metadata.get("quotas")
+    if quotas_dict is None:
+        quotas_dict = {}
+        node.metadata["quotas"] = quotas_dict
+
+    qname_dict = quotas_dict.get(ge_queue.qname)
+    if qname_dict is None:
+        qname_dict = {}
+        quotas_dict[ge_queue.qname] = qname_dict
+
+    hg_dict = qname_dict.get(hostgroup)
+    if hg_dict is None:
+        hg_dict = {}
+        qname_dict[hostgroup] = hg_dict
+
+    hg_dict[resource_name] = quota
+
+    node.available[namespaced_key] = quota
+    node._resources[namespaced_key] = quota
+
+
+def make_node_preprocessor(ge_env: "GridEngineEnvironment") -> Callable[[Node], bool]:
+    def node_preprocessor(node: Node) -> bool:
+        hostgroups = get_node_hostgroups(node) or ge_env.hostgroups
+        for ge_queue in ge_env.queues.values():
+
+            for c in ge_env.complexes.values():
+
+                names = [c.name] if c.name == c.shortcut else [c.name, c.shortcut]
+                for hg in hostgroups:
+                    for resource_name in names:
+                        _process_quota(c, resource_name, node, ge_queue, hg)
+        return True
+
+    return node_preprocessor
+
+
+def make_quota_bound_consumable_constraint(
+    resource_name: str,
+    value: Union[int, float],
+    target_qname: str,
+    ge_env: "GridEngineEnvironment",
+) -> NodeConstraint:
+    process_quota_wrapper = make_node_preprocessor(ge_env)
+    qnames = list(ge_env.queues)
+    return QuotaConstraint(
+        qnames, resource_name, value, target_qname, process_quota_wrapper,
+    )
+
+
+class QuotaConstraint(BaseNodeConstraint):
+    """
+    Decrements both the total amount and the queue bound amount (complex_name and qname@complex_name).
+    It also floors other bound amounts to the total amount available.
+    """
+
+    def __init__(
+        self,
+        qnames: List[str],
+        resource_name: str,
+        value: Union[float, int],
+        target_qname: str,
+        bucket_preprocessor: Callable[[Node], bool],
+    ) -> None:
+        self.resource_name = resource_name
+        self.value = value
+        self.target_qname = target_qname
+        self.pattern = re.compile("([^@]+@)?{}".format(resource_name))
+        self.target_resource = "{}@{}".format(target_qname, resource_name)
+        self.bucket_preprocessor = bucket_preprocessor
+
+        self.child_constraint = And(
+            MinResourcePerNode(resource_name, value),
+            MinResourcePerNode(self.target_resource, value),
+        )
+
+    def satisfied_by_bucket(self, bucket: NodeBucket) -> Result:
+        copy = bucket.example_node.clone()
+        self.bucket_preprocessor(copy)
+        return self.satisfied_by_node(copy)
+
+    def satisfied_by_node(self, node: Node) -> Result:
+        return self.child_constraint.satisfied_by_node(node)
+
+    def do_decrement(self, node: Node) -> bool:
+        """
+        pcpu = 10
+        q1@pcpu=4
+        q2@pcpu=8
+
+        if target is pcpu: pcpu=9, q1@pcpu=4, q2@pcpu=8
+        if target is q1@ : pcpu=9, q1@pcpu=3, q2@pcpu=8
+        if target is q2@ : pcpu=9, q1@pcpu=4, q2@pcpu=7
+        """
+        matches = []
+        for resource_name, value in node.available.items():
+            if self.pattern.match(resource_name):
+                matches.append((resource_name, value))
+
+        new_floor = node.available[self.resource_name] - self.value
+        for match, match_value in matches:
+            if "@" in match and match != self.target_resource:
+                node.available[match] = min(new_floor, match_value)
+
+        return self.child_constraint.do_decrement(node)
+
+    def get_children(self) -> List[NodeConstraint]:
+        return [self.child_constraint]
+
+    def minimum_space(self, node: Node) -> int:
+        return self.child_constraint.minimum_space(node)
+
+    def to_dict(self) -> Dict:
+        return {
+            "quota-constraint": {
+                "target-resource": self.target_resource,
+                "value": self.value,
+                "child-constraint": self.child_constraint.to_dict(),
+            }
+        }
+
+    def __str__(self) -> str:
+        return "QuotaConstraint({}, {})".format(self.target_resource, self.value)

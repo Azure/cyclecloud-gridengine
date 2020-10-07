@@ -17,6 +17,7 @@ from hpc.autoscale.job.nodequeue import NodeQueue
 from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.constraints import (
     BaseNodeConstraint,
+    Constraint,
     NodeConstraint,
     Or,
     XOr,
@@ -29,7 +30,7 @@ from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
 from gridengine import environment as envlib
 from gridengine import validate as validatelib
 from gridengine.allocation_rules import FixedProcesses
-from gridengine.complex import Complex
+from gridengine.complex import Complex, make_quota_bound_consumable_constraint
 from gridengine.environment import GridEngineEnvironment
 from gridengine.hostgroup import BoundHostgroup
 from gridengine.parallel_environments import ParallelEnvironment
@@ -733,8 +734,8 @@ def _get_jobs_and_nodes(
     # -s  pr -- show only pending or running
     # -f -- full output. Ambiguous what this means, but in this case it includes host information so that
     # we can get one consistent view (i.e. not split between two calls, introducing a race condition)
-    # qstat -xml -s prs -r -f -ext -F
-    cmd = ["-xml", "-s", "prs", "-r", "-f", "-ext", "-F"]
+    # qstat -xml -s prs -r -f -ext -explain c -F
+    cmd = ["-xml", "-s", "prs", "-r", "-f", "-ext", "-explain", "c", "-F"]
     relevant_complexes = (
         autoscale_config.get("gridengine", {}).get("relevant_complexes") or []
     )
@@ -792,16 +793,11 @@ def _parse_scheduler_nodes(
         if hostname in schedulers:
             continue
 
-        if hostname in compute_nodes:
-            compute_node = compute_nodes[hostname]
-            _assign_jobs(compute_node, qiqle, running_jobs, ge_env)
-            continue
-
         slots_total = int(_getr(qiqle, "slots_total"))
 
-        if slots_total == 0:
-            logging.debug("Ignoring nodes with 0 slots: %s", name)
-            continue
+        # if slots_total == 0:
+        #     logging.error("Ignoring nodes with 0 slots: %s", name)
+        #     continue
 
         resources: dict = {"slots": slots_total}
         if "slots" in ge_env.complexes:
@@ -822,6 +818,10 @@ def _parse_scheduler_nodes(
 
         for res in qiqle.iter("resource"):
             resource_name = res.attrib["name"]
+            # qc == quota complex, hc == host complex
+            resource_type = res.attrib.get("type", "hc")
+            is_quota_complex = resource_type.startswith("q")
+
             complex = ge_env.complexes.get(resource_name)
             text = res.text or "NONE"
 
@@ -841,7 +841,6 @@ def _parse_scheduler_nodes(
                 unfiltered_complex = ge_env.unfiltered_complexes.get(resource_name)
                 if unfiltered_complex and filter_if_time(unfiltered_complex):
                     continue
-
                 resources[resource_name] = text
                 if resource_name not in _LOGGED_WARNINGS:
                     logging.warning(
@@ -855,15 +854,34 @@ def _parse_scheduler_nodes(
                 if filter_if_time(complex):
                     continue
 
-                resources[complex.name] = complex.parse(text)
-                resources[complex.shortcut] = resources[complex.name]
+                # actual host complex, not just a quota constraint
+                # host complexes can go to .available/resources but
+                # quota constraints are namespaced.
 
-        compute_node = SchedulerNode(hostname, resources)
+                name_key = "{}@{}".format(queue_name, complex.name)
+                shortcut_key = "{}@{}".format(queue_name, complex.shortcut)
+                resources[name_key] = complex.parse(text)
+                resources[shortcut_key] = complex.parse(text)
+                if is_quota_complex:
+                    resources[complex.name] = complex.parse(text)
+                    resources[complex.shortcut] = resources[complex.name]
+                    resources["debug_" + complex.name] = resources[complex.name]
+
+        if hostname in compute_nodes:
+            compute_node = compute_nodes[hostname]
+        else:
+            compute_node = SchedulerNode(
+                hostname, {"ccnodeid": resources.get("ccnodeid")}
+            )
+
+        compute_node.available.update(resources)
+        compute_node._resources.update(resources)
 
         compute_node.metadata["state"] = _get(qiqle, "state") or ""
 
         # decrement using compute_node.available. Just use slots here
-        compute_node.available["slots"] = (
+        slots_key = "{}@slots".format(queue_name)
+        compute_node.available[slots_key] = (
             slots_total
             - int(_getr(qiqle, "slots_used"))
             + int(_getr(qiqle, "slots_resv"))
@@ -871,16 +889,38 @@ def _parse_scheduler_nodes(
 
         if "slots" in ge_env.complexes:
             s = ge_env.complexes["slots"].shortcut
-            compute_node.available[s] = compute_node.available["slots"]
+            compute_node.available[s] = compute_node.available[slots_key]
 
         _assign_jobs(compute_node, qiqle, running_jobs, ge_env)
 
+        # TODO RDH
         compute_node.metadata["gridengine_hostgroups"] = ",".join(
             ge_env.host_memberships.get(
                 compute_node.hostname.lower(), str(ge_env.host_memberships)
             )
         )
         compute_nodes[compute_node.hostname] = compute_node
+
+    # if every queue is using a slots quota, you won't get the accurate number for slots
+    # on the global level. Might as well just set it to the max quota seen here.
+    for compute_node in compute_nodes.values():
+        for name, complex in ge_env.complexes.items():
+
+            if name in compute_node.resources:
+                continue
+
+            # TODO RDH how to propagate non-numerics?
+            if not complex.is_numeric:
+                continue
+
+            max_value = 0
+            suffix = "@{}".format(name)
+            for k, v in compute_node.available:
+                if k.endswith(suffix):
+                    max_value = max(max_value, v)
+
+            compute_node._resources["slots"] = max_value
+            compute_node.available["slots"] = max_value
 
     return list(compute_nodes.values()), list(running_jobs.values())
 
@@ -973,64 +1013,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
 
     job_resources: Dict[str, Any] = {}
     project = _get(jijle, "JB_project")
-
     owner = _get(jijle, "JB_owner")
-
-    for req in jijle.iter("hard_request"):
-        if req.text is None:
-            logging.warning(
-                "Found null hard_request (%s) for job %s, skipping", req, job_id
-            )
-            continue
-
-        # we currently won't do anything with any TIME complex type
-        def filter_if_time(c: Complex) -> bool:
-            if c.complex_type in ["TIME"]:
-                if resource_name not in _LOGGED_WARNINGS:
-                    logging.warning("Ignoring TIME resource %s", resource_name)
-                _LOGGED_WARNINGS.add(resource_name)
-                return True
-            return False
-
-        resource_name = req.attrib["name"]
-        complex = ge_env.complexes.get(resource_name)
-        if not complex:
-            unfiltered_complex = ge_env.unfiltered_complexes.get("resource_name")
-            if unfiltered_complex and filter_if_time(unfiltered_complex):
-                continue
-
-            if resource_name not in _LOGGED_WARNINGS:
-                logging.warning(
-                    "Unknown resource %s. This will be ignored for autoscaling purposes and "
-                    + "may cause issues with grid engine's ability to schedule this job.",
-                    resource_name,
-                )
-                _LOGGED_WARNINGS.add(resource_name)
-            continue
-        else:
-            req_value = complex.parse(req.text)
-
-        if complex:
-            # if complex.shortcut != complex.name and complex.relop != "EXCL":
-            #     # always use the full name as the resource name. The shortcut
-            #     # will be included below
-            #     if resource_name == complex.shortcut:
-            #         resource_name = complex.shortcut
-            if filter_if_time(complex):
-                continue
-
-            if complex.name == "slots":
-                # ensure we don't double count slots if someone specifies it
-                constraints[0]["slots"] = req_value
-            else:
-                constraints.append({complex.name: req_value})
-                if complex.shortcut != complex.name and complex.relop != "EXCL":
-                    # add in the shortcut as well
-                    constraints.append({complex.shortcut: req_value})
-            job_resources[complex.name] = req_value
-        else:
-            constraints.append({resource_name: req_value})
-            job_resources[resource_name] = req_value
 
     jobs: List[Job]
 
@@ -1061,6 +1044,14 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
             return None
 
         queue_and_hostgroup_constraints = []
+        _apply_constraints(
+            jijle=jijle,
+            job_id=job_id,
+            qname=qname,
+            ge_env=ge_env,
+            job_resources=job_resources,
+            constraints_out=constraints,
+        )
         for hg_name in hostgroup_names:
             hostgroup = ge_queue.bound_hostgroups.get(hg_name)
 
@@ -1100,6 +1091,83 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
         job.metadata["job_state"] = job_state
 
     return jobs
+
+
+def _apply_constraints(
+    jijle: Element,
+    job_id: str,
+    qname: str,
+    ge_env: GridEngineEnvironment,
+    job_resources: Dict,
+    constraints_out: List[Constraint],
+) -> None:
+    """
+
+    """
+
+    for req in jijle.iter("hard_request"):
+        if req.text is None:
+            logging.warning(
+                "Found null hard_request (%s) for job %s, skipping", req, job_id
+            )
+            continue
+        resource_name = req.attrib["name"]
+
+        # we currently won't do anything with any TIME complex type
+        def filter_if_time(c: Complex) -> bool:
+            if c.complex_type in ["TIME"]:
+                if resource_name not in _LOGGED_WARNINGS:
+                    logging.warning("Ignoring TIME resource %s", resource_name)
+                _LOGGED_WARNINGS.add(resource_name)
+                return True
+            return False
+
+        complex = ge_env.complexes.get(resource_name)
+        if not complex:
+            unfiltered_complex = ge_env.unfiltered_complexes.get("resource_name")
+            if unfiltered_complex and filter_if_time(unfiltered_complex):
+                continue
+
+            if resource_name not in _LOGGED_WARNINGS:
+                logging.warning(
+                    "Unknown resource %s. This will be ignored for autoscaling purposes and "
+                    + "may cause issues with grid engine's ability to schedule this job.",
+                    resource_name,
+                )
+                _LOGGED_WARNINGS.add(resource_name)
+            continue
+        else:
+            req_value = complex.parse(req.text)
+
+        if complex:
+            if filter_if_time(complex):
+                continue
+
+            # TODO not sure this if is ever
+            if complex.name == "slots":
+                # ensure we don't double count slots if someone specifies it
+                constraints_out[0]["slots"] = req_value
+            else:
+                if complex.complex_type in ["INT", "DOUBLE", "RSMAP"]:
+                    constraints_out.append(
+                        make_quota_bound_consumable_constraint(
+                            complex.name,
+                            req_value,  # type: ignore
+                            qname,
+                            ge_env,
+                        )
+                    )
+                else:
+                    namespaced_key = "{}@{}".format(qname, complex.name)
+                    constraints_out.append({namespaced_key: req_value})
+
+                if complex.shortcut != complex.name and complex.relop != "EXCL":
+                    # add in the shortcut as well
+                    constraints_out.append({complex.shortcut: req_value})
+            job_resources[complex.name] = req_value
+        else:
+            constraints_out.append({resource_name: req_value})
+            job_resources[resource_name] = req_value
 
 
 def _pe_job(
@@ -1170,12 +1238,14 @@ def _pe_job(
     else:
         constraints.append(queue_and_hostgroup_constraints[0])
 
+    slots_key = "{}@slots".format(ge_queue.qname)
+
     job_constructor: Callable[[str], Job]
 
     if pe.is_fixed:
         assert isinstance(pe.allocation_rule, FixedProcesses)
         alloc_rule: FixedProcesses = pe.allocation_rule  # type: ignore
-        constraints[0]["slots"] = alloc_rule.fixed_processes
+        constraints[0][slots_key] = alloc_rule.fixed_processes
         num_nodes = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
         constraints.append({"exclusive_task": True})
 
@@ -1189,12 +1259,12 @@ def _pe_job(
             )
 
     elif pe.allocation_rule.name == "$pe_slots":
-        constraints[0]["slots"] = pe_count
+        constraints[0][slots_key] = pe_count
         # this is not colocated, so we can skip the redirection
         return [Job(job_id, constraints, iterations=num_tasks)]
 
     elif pe.allocation_rule.name in ["$round_robin", "$fill_up"]:
-        constraints[0]["slots"] = 1
+        constraints[0][slots_key] = 1
 
         def job_constructor(job_id: str) -> Job:
             return Job(
