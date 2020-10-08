@@ -1386,8 +1386,10 @@ class HostgroupConstraint(BaseNodeConstraint):
 
             add_node_to_hostgroup(node, self.hostgroup)
 
-        for child in self.hostgroup.constraints:
-            assert child.do_decrement(node)
+        # child constraints should not actually decrement anything
+        # they are minimums
+        # for child in self.hostgroup.constraints:
+        #     assert child.do_decrement(node)
 
         return True
 
