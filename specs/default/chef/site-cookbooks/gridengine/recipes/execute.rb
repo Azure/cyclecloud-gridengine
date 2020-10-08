@@ -3,7 +3,7 @@
 # Recipe:: sgeexec
 #
 
-include_recipe "gridengine::sgefs"
+include_recipe "gridengine::sgefs" if node[:gridengine][:managed_fs]
 include_recipe "gridengine::submitter"
 
 gridengineroot = node[:gridengine][:root]

@@ -20,6 +20,7 @@ default[:gridengine][:admin_mail] = ""
 
 default[:gridengine][:idle_timeout] = 300
 
+default[:gridengine][:managed_fs] = true
 default[:gridengine][:shared][:bin] = true
 default[:gridengine][:shared][:spool] = true
 

@@ -6,7 +6,7 @@
 
 group node[:gridengine][:group][:name] do
   gid node[:gridengine][:group][:gid]
-  not_if "grep #{node[:gridengine][:group][:name]} /etc/group --quiet"
+  not_if "getent group #{node[:gridengine][:group][:name]}"
 end
 
 user node[:gridengine][:user][:name] do
@@ -15,7 +15,7 @@ user node[:gridengine][:user][:name] do
   gid node[:gridengine][:user][:gid]
   home node[:gridengine][:user][:home]
   shell node[:gridengine][:user][:shell]
-  not_if "grep #{node[:gridengine][:user][:name]}  /etc/passwd --quiet"
+  not_if "getent passwd #{node[:gridengine][:user][:name]}"
 end
 
 gridengineroot = node[:gridengine][:root]
