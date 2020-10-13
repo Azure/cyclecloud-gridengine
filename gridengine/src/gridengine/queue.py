@@ -1,6 +1,6 @@
 import re
 import typing
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
@@ -130,7 +130,9 @@ class GridEngineQueue:
     def bound_hostgroups(self) -> Dict[str, BoundHostgroup]:
         return self.__bound_hostgroups
 
-    def get_quota(self, complex_name: str, hostgroup: str) -> Optional[Any]:
+    def get_quota(
+        self, complex_name: Union[str, "Complex"], hostgroup: str
+    ) -> Optional[Any]:
         """
         With quotas, the default quota is not inherited if a hostgroup is defined. i.e.
         > complex_values testbool=true
@@ -146,6 +148,9 @@ class GridEngineQueue:
 
         So simply defining [@Standard_2=] with anything removes the default
         """
+        if not isinstance(complex_name, str):
+            complex_name = complex_name.name
+
         cv_for_hg = self.complex_values.get(hostgroup)
         if cv_for_hg:
             # if the hostgroup is defined, I don't care what the non-hg versions

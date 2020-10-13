@@ -247,7 +247,7 @@ def process_quotas(
 
         for c in complexes.values():
 
-            names = [c.name] if c.name == c.shortcut else [c.name, c.shortcut]
+            names = set([c.name, c.shortcut])
             for hg in hostgroups:
                 for resource_name in names:
                     _process_quota(c, resource_name, node, ge_queue, hg)
@@ -266,7 +266,7 @@ def _process_quota(
 
     host_value = node.available.get(resource_name)
     # if no quota is defined, then use the host_value (which may also be undefined)
-    quota = ge_queue.get_quota(c.name, hostgroup)
+    quota = ge_queue.get_quota(c, hostgroup)
 
     if quota is None:
         quota = host_value

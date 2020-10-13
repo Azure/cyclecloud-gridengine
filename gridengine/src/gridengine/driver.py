@@ -1148,7 +1148,7 @@ def _apply_constraints(
                 # ensure we don't double count slots if someone specifies it
                 constraints_out[0]["slots"] = req_value
             else:
-                if complex.complex_type in ["INT", "DOUBLE", "RSMAP"]:
+                if complex.is_numeric:
                     constraints_out.append(
                         make_quota_bound_consumable_constraint(
                             complex.name,
