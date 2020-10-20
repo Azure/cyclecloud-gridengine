@@ -88,10 +88,28 @@ def validate_hg_intersections(
     return failure
 
 
-def validate_ht_hostgroup(queue: GridEngineQueue, warn_function: WarnFunction) -> bool:
-    if queue.get_hostgroups_for_ht():
-        return True
+def validate_ht_hostgroup(
+    queue: GridEngineQueue, ge_env: GridEngineEnvironment, warn_function: WarnFunction
+) -> bool:
     warn = warn_function
+
+    ht_groups = queue.get_hostgroups_for_ht()
+    if len(ht_groups) == 1:
+        return True
+
+    if len(ht_groups) > 1:
+        if ge_env.scheduler.sort_by_seqno:
+            return True
+        warn(
+            "Queue %s has multiple hostgroups that will map to non-pe jobs.",
+            queue.qname,
+        )
+        warn(
+            "  Set weight_queue_host_sort < weight_queue_seqno in qconf -msconf to enable"
+        )
+        warn("  sorting by seq_no to deal with this ambiguity.")
+        return False
+
     warn(
         "Queue %s has no hostgroup in its hostlist that is not associated "
         + "with a multi-node parallel environment (excluding SMP/$pe_slots)",

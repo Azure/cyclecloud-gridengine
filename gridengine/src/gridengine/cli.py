@@ -215,7 +215,7 @@ def validate_func(config: Dict) -> None:
     failure = validate.validate_nodes(config, dcalc, warn) or failure
     for qname, queue in ge_env.queues.items():
         failure = validate.validate_queue_has_hosts(queue, ge_env.qbin, warn) or failure
-        failure = validate.validate_ht_hostgroup(queue, warn) or failure
+        failure = validate.validate_ht_hostgroup(queue, ge_env, warn) or failure
         failure = validate.validate_pe_hostgroups(queue, warn) or failure
 
     if failure:
