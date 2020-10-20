@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
+from hpc.autoscale.node.node import Node
 from hpc.autoscale.util import partition_single
 
 from gridengine.complex import parse_queue_complex_values
@@ -41,6 +42,8 @@ class GridEngineQueue:
         self.__slots = parse_slots(self.queue_config.get("slots", ""))
 
         for hg, slots in self.__slots.items():
+            if hg is None:
+                continue
             if hg not in self.complex_values:
                 self.complex_values[hg] = {}
             self.complex_values[hg]["slots"] = slots
@@ -55,7 +58,6 @@ class GridEngineQueue:
                     continue
 
                 if pe_name not in pes:
-                    assert False
                     logging.warning(
                         "Parallel environment %s was not found - %s. Skipping",
                         pe_name,
@@ -131,7 +133,7 @@ class GridEngineQueue:
         return self.__bound_hostgroups
 
     def get_quota(
-        self, complex_name: Union[str, "Complex"], hostgroup: str
+        self, node: Node, complex_name: Union[str, "Complex"], hostgroup: str
     ) -> Optional[Any]:
         """
         With quotas, the default quota is not inherited if a hostgroup is defined. i.e.
@@ -159,6 +161,9 @@ class GridEngineQueue:
         default_cv = self.complex_values.get(None)  # type: ignore
         if default_cv and complex_name in default_cv:
             return default_cv[complex_name]
+
+        if complex_name in node.available:
+            return node.available[complex_name]
 
         return None
 

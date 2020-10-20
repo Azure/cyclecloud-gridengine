@@ -1,7 +1,6 @@
 from typing import Optional, Union
 from unittest import mock
 
-import pytest
 from hpc.autoscale.hpctypes import Memory
 from hpc.autoscale.job.schedulernode import SchedulerNode
 
@@ -284,7 +283,6 @@ def test_process_numeric_quotas() -> None:
 
 
 # fix asap
-@pytest.mark.skip
 def test_process_string_quotas() -> None:
     def run_test(
         ctype: str,
@@ -334,7 +332,7 @@ def test_process_string_quotas() -> None:
         assert node.available["hpc.q@lic"] == "bcd"
         assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["lic"] == "bcd"
 
-        node = run_test(ctype, None, None, None, "xyz")  # type: ignore
+        node = run_test(ctype, "xyz", None, None, "xyz")  # type: ignore
         # assert node.available["lic"] == "xyz"
         assert node.available["hpc.q@lic"] == "xyz"
         assert node.metadata["quotas"]["hpc.q"]["@hpc.q"]["lic"] == "xyz"
@@ -384,16 +382,18 @@ def test_quota_bool_resource() -> None:
 
 def test_quota_bound_resource_number() -> None:
     ge_env = common_ge_env()
-    ge_env.queues["hpc.q"].complex_values[None] = {"pcpu": 6}
-    ge_env.queues["htc.q"].complex_values[None] = {"pcpu": 4}
+    hpcq = ge_env.queues["hpc.q"]
+    htcq = ge_env.queues["htc.q"]
+    hpcq.complex_values[None] = {"pcpu": 6}
+    htcq.complex_values[None] = {"pcpu": 4}
 
     node = SchedulerNode("tux", resources={"pcpu": 8})
 
     node.available["hpc.q@pcpu"] = 6
     node.available["htc.q@pcpu"] = 4
 
-    c1 = make_quota_bound_consumable_constraint("pcpu", 1, "hpc.q", ge_env)
-    c2 = make_quota_bound_consumable_constraint("pcpu", 2, "htc.q", ge_env)
+    c1 = make_quota_bound_consumable_constraint("pcpu", 1, hpcq, ge_env, ["@hpc.q"])
+    c2 = make_quota_bound_consumable_constraint("pcpu", 2, htcq, ge_env, ["@htc.q"])
     # imagine the node has 8 pcpus, but hpc.q limits it to 6, and htc.q to 4
     assert node.available["pcpu"] == 8
 

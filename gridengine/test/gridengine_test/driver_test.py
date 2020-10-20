@@ -10,6 +10,7 @@ from hpc.autoscale.node.constraints import XOr
 from gridengine import driver, util
 from gridengine.driver import GridEngineDriver
 from gridengine.hostgroup import BoundHostgroup, Hostgroup
+from gridengine.util import json_dump
 from gridengine_test.autoscaler_test import common_ge_env
 
 
@@ -19,13 +20,20 @@ def setup_module() -> None:
 
 @pytest.mark.skip
 def test_custom_parser() -> None:
+    ge_env = common_ge_env()
     qc = driver.HostgroupConstraint
     hg = Hostgroup("@htc_q_mpipg0", {"node.nodearray": "htc"})
-    q = qc(hg, hg.name.replace("@", "pg0"))
+    bhg = BoundHostgroup(ge_env.queues["htc.q"], hg, 0)
+    q = qc(bhg, bhg.name.replace("@", "pg0"))
+    json_dump(q.to_dict())
     expected_dict: Dict[str, Optional[Any]] = {
-        "hostgroups-and-pg": {
-            "hostgroups": ["@htc_q_mpipg0"],
-            "placement-group": "pg0",
+        "hostgroup-and-pg": {
+            "hostgroup": "@htc_q_mpipg0",
+            "user": None,
+            "project": None,
+            "placement-group": "pg0htc_q_mpipg0",
+            "seq-no": 0,
+            "constraints": [{"nodearray": ["htc"]}],
         }
     }
     assert q.to_dict() == expected_dict

@@ -8,15 +8,15 @@ from hpc.autoscale.node.bucket import NodeBucket
 from hpc.autoscale.node.constraints import (
     And,
     BaseNodeConstraint,
-    MinResourcePerNode,
     NodeConstraint,
+    get_constraint,
 )
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.results import Result
 from hpc.autoscale.util import partition_single
 
 from gridengine.qbin import QBin
-from gridengine.util import get_node_hostgroups, parse_hostgroup_mapping
+from gridengine.util import parse_hostgroup_mapping
 
 if typing.TYPE_CHECKING:
     from gridengine.queue import GridEngineQueue
@@ -110,6 +110,10 @@ class Complex:
     @property
     def is_numeric(self) -> bool:
         return self.__is_numeric
+
+    @property
+    def is_excl(self) -> bool:
+        return self.relop == "EXCL"
 
     def __str__(self) -> str:
         return "Complex(name={}, shortcut={}, type={}, default={})".format(
@@ -260,13 +264,16 @@ def _process_quota(
     ge_queue: "GridEngineQueue",
     hostgroup: str,
 ) -> None:
+    if c.is_excl:
+        return
+
     namespaced_key = "{}@{}".format(ge_queue.qname, resource_name)
     if namespaced_key in node.available:
         return
 
     host_value = node.available.get(resource_name)
     # if no quota is defined, then use the host_value (which may also be undefined)
-    quota = ge_queue.get_quota(c, hostgroup)
+    quota = ge_queue.get_quota(node, c, hostgroup)
 
     if quota is None:
         quota = host_value
@@ -304,17 +311,18 @@ def _process_quota(
     node._resources[namespaced_key] = quota
 
 
-def make_node_preprocessor(ge_env: "GridEngineEnvironment") -> Callable[[Node], bool]:
+def make_node_preprocessor(
+    ge_env: "GridEngineEnvironment",
+    target_queue: "GridEngineQueue",
+    hostgroups: List[str],
+) -> Callable[[Node], bool]:
     def node_preprocessor(node: Node) -> bool:
-        hostgroups = get_node_hostgroups(node) or ge_env.hostgroups
-        for ge_queue in ge_env.queues.values():
+        for c in ge_env.complexes.values():
 
-            for c in ge_env.complexes.values():
-
-                names = [c.name] if c.name == c.shortcut else [c.name, c.shortcut]
-                for hg in hostgroups:
-                    for resource_name in names:
-                        _process_quota(c, resource_name, node, ge_queue, hg)
+            names = [c.name] if c.name == c.shortcut else [c.name, c.shortcut]
+            for hg in hostgroups:
+                for resource_name in names:
+                    _process_quota(c, resource_name, node, target_queue, hg)
         return True
 
     return node_preprocessor
@@ -323,13 +331,14 @@ def make_node_preprocessor(ge_env: "GridEngineEnvironment") -> Callable[[Node], 
 def make_quota_bound_consumable_constraint(
     resource_name: str,
     value: Union[int, float],
-    target_qname: str,
+    target_queue: "GridEngineQueue",
     ge_env: "GridEngineEnvironment",
-) -> NodeConstraint:
-    process_quota_wrapper = make_node_preprocessor(ge_env)
+    hostgroups: List[str],
+) -> "QuotaConstraint":
+    process_quota_wrapper = make_node_preprocessor(ge_env, target_queue, hostgroups)
     qnames = list(ge_env.queues)
     return QuotaConstraint(
-        qnames, resource_name, value, target_qname, process_quota_wrapper,
+        qnames, resource_name, value, target_queue.qname, process_quota_wrapper,
     )
 
 
@@ -355,16 +364,16 @@ class QuotaConstraint(BaseNodeConstraint):
         self.bucket_preprocessor = bucket_preprocessor
 
         self.child_constraint = And(
-            MinResourcePerNode(resource_name, value),
-            MinResourcePerNode(self.target_resource, value),
+            get_constraint({resource_name: value}),
+            get_constraint({self.target_resource: value}),
         )
 
     def satisfied_by_bucket(self, bucket: NodeBucket) -> Result:
         copy = bucket.example_node.clone()
-        self.bucket_preprocessor(copy)
         return self.satisfied_by_node(copy)
 
     def satisfied_by_node(self, node: Node) -> Result:
+        self.bucket_preprocessor(node)
         return self.child_constraint.satisfied_by_node(node)
 
     def do_decrement(self, node: Node) -> bool:
@@ -377,6 +386,9 @@ class QuotaConstraint(BaseNodeConstraint):
         if target is q1@ : pcpu=9, q1@pcpu=3, q2@pcpu=8
         if target is q2@ : pcpu=9, q1@pcpu=4, q2@pcpu=7
         """
+        if isinstance(self.value, (str, bool)):
+            return True
+
         matches = []
         for resource_name, value in node.available.items():
             if self.pattern.match(resource_name):
@@ -393,6 +405,10 @@ class QuotaConstraint(BaseNodeConstraint):
         return [self.child_constraint]
 
     def minimum_space(self, node: Node) -> int:
+        # when calculating the min space of an example node
+        if node.name.endswith("-0"):
+            node = node.clone()
+        self.bucket_preprocessor(node)
         return self.child_constraint.minimum_space(node)
 
     def to_dict(self) -> Dict:

@@ -4,7 +4,7 @@ import os
 import socket
 import tempfile
 from subprocess import CalledProcessError
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
 
@@ -30,7 +30,11 @@ from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
 from gridengine import environment as envlib
 from gridengine import validate as validatelib
 from gridengine.allocation_rules import FixedProcesses
-from gridengine.complex import Complex, make_quota_bound_consumable_constraint
+from gridengine.complex import (
+    Complex,
+    QuotaConstraint,
+    make_quota_bound_consumable_constraint,
+)
 from gridengine.environment import GridEngineEnvironment
 from gridengine.hostgroup import BoundHostgroup
 from gridengine.parallel_environments import ParallelEnvironment
@@ -818,6 +822,7 @@ def _parse_scheduler_nodes(
 
         for res in qiqle.iter("resource"):
             resource_name = res.attrib["name"]
+
             # qc == quota complex, hc == host complex
             resource_type = res.attrib.get("type", "hc")
             is_quota_complex = resource_type.startswith("q")
@@ -857,6 +862,11 @@ def _parse_scheduler_nodes(
                 # actual host complex, not just a quota constraint
                 # host complexes can go to .available/resources but
                 # quota constraints are namespaced.
+                if complex.name == "exclusive":
+                    assert complex.is_excl  # TODO RDH
+                if complex.is_excl:
+                    resources["exclusive"] = complex.parse(text)
+                    continue
 
                 name_key = "{}@{}".format(queue_name, complex.name)
                 shortcut_key = "{}@{}".format(queue_name, complex.shortcut)
@@ -919,8 +929,8 @@ def _parse_scheduler_nodes(
                 if k.endswith(suffix):
                     max_value = max(max_value, v)
 
-            compute_node._resources["slots"] = max_value
-            compute_node.available["slots"] = max_value
+            compute_node._resources[name] = max_value
+            compute_node.available[name] = max_value
 
     return list(compute_nodes.values()), list(running_jobs.values())
 
@@ -1009,7 +1019,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
     if tasks_expr:
         num_tasks = _parse_tasks(tasks_expr)
 
-    constraints: List[Dict] = [{"slots": slots}]
+    constraints: List[Union[QuotaConstraint, Dict]] = [{"slots": slots}]
 
     job_resources: Dict[str, Any] = {}
     project = _get(jijle, "JB_project")
@@ -1023,6 +1033,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
         pe_jobs = _pe_job(
             ge_env,
             ge_queue,
+            jijle,
             pe_elem,
             job_id,
             constraints,
@@ -1039,7 +1050,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
         hostgroup_names = ge_queue.get_hostgroups_for_ht()
 
         if not hostgroup_names:
-            validatelib.validate_ht_hostgroup(ge_queue, logging.warning)
+            validatelib.validate_ht_hostgroup(ge_queue, ge_env, logging.warning)
             logging.error("No hostgroup for job %s. See warnings above.", job_id)
             return None
 
@@ -1047,10 +1058,11 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
         _apply_constraints(
             jijle=jijle,
             job_id=job_id,
-            qname=qname,
+            ge_queue=ge_queue,
             ge_env=ge_env,
             job_resources=job_resources,
             constraints_out=constraints,
+            hostgroups=hostgroup_names,
         )
         for hg_name in hostgroup_names:
             hostgroup = ge_queue.bound_hostgroups.get(hg_name)
@@ -1096,15 +1108,15 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
 def _apply_constraints(
     jijle: Element,
     job_id: str,
-    qname: str,
+    ge_queue: GridEngineQueue,
     ge_env: GridEngineEnvironment,
     job_resources: Dict,
     constraints_out: List[Constraint],
+    hostgroups: List[str],
 ) -> None:
     """
 
     """
-
     for req in jijle.iter("hard_request"):
         if req.text is None:
             logging.warning(
@@ -1123,6 +1135,7 @@ def _apply_constraints(
             return False
 
         complex = ge_env.complexes.get(resource_name)
+
         if not complex:
             unfiltered_complex = ge_env.unfiltered_complexes.get("resource_name")
             if unfiltered_complex and filter_if_time(unfiltered_complex):
@@ -1146,22 +1159,27 @@ def _apply_constraints(
             # TODO not sure this if is ever
             if complex.name == "slots":
                 # ensure we don't double count slots if someone specifies it
-                constraints_out[0]["slots"] = req_value
+                assert isinstance(req_value, (int, float))
+                constraints_out[0] = make_quota_bound_consumable_constraint(
+                    "slots", req_value, ge_queue, ge_env, hostgroups
+                )
             else:
-                if complex.is_numeric:
+                if complex.is_excl:
+                    if complex.name == "complex":
+                        assert complex.is_excl
+                    constraints_out.append({complex.name: req_value})
+                else:
                     constraints_out.append(
                         make_quota_bound_consumable_constraint(
                             complex.name,
                             req_value,  # type: ignore
-                            qname,
+                            ge_queue,
                             ge_env,
+                            hostgroups,
                         )
                     )
-                else:
-                    namespaced_key = "{}@{}".format(qname, complex.name)
-                    constraints_out.append({namespaced_key: req_value})
 
-                if complex.shortcut != complex.name and complex.relop != "EXCL":
+                if complex.shortcut != complex.name and not complex.is_excl:
                     # add in the shortcut as well
                     constraints_out.append({complex.shortcut: req_value})
             job_resources[complex.name] = req_value
@@ -1173,9 +1191,10 @@ def _apply_constraints(
 def _pe_job(
     ge_env: GridEngineEnvironment,
     ge_queue: GridEngineQueue,
+    jijle: Element,
     pe_elem: Element,
     job_id: str,
-    constraints: List[Dict],
+    constraints: List[Union[Constraint, Dict]],
     slots: int,
     num_tasks: int,
     owner: Optional[str],
@@ -1216,8 +1235,10 @@ def _pe_job(
         return None
 
     queue_and_hostgroup_constraints = []
+    all_hostgroups = set()
     for pe in pes:
         hostgroups = ge_queue.get_hostgroups_for_pe(pe.name)
+        all_hostgroups.update(hostgroups)
 
         pe_count = int(pe_elem.text)
 
@@ -1238,14 +1259,25 @@ def _pe_job(
     else:
         constraints.append(queue_and_hostgroup_constraints[0])
 
-    slots_key = "{}@slots".format(ge_queue.qname)
+    _apply_constraints(
+        jijle=jijle,
+        job_id=job_id,
+        ge_queue=ge_queue,
+        ge_env=ge_env,
+        job_resources={},
+        constraints_out=constraints,
+        hostgroups=list(all_hostgroups),
+    )
 
     job_constructor: Callable[[str], Job]
 
     if pe.is_fixed:
         assert isinstance(pe.allocation_rule, FixedProcesses)
         alloc_rule: FixedProcesses = pe.allocation_rule  # type: ignore
-        constraints[0][slots_key] = alloc_rule.fixed_processes
+        alloc_rule.fixed_processes
+        constraints[0] = make_quota_bound_consumable_constraint(
+            "slots", alloc_rule.fixed_processes, ge_queue, ge_env, list(all_hostgroups),
+        )
         num_nodes = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
         constraints.append({"exclusive_task": True})
 
@@ -1259,12 +1291,30 @@ def _pe_job(
             )
 
     elif pe.allocation_rule.name == "$pe_slots":
-        constraints[0][slots_key] = pe_count
+        constraints[0] = make_quota_bound_consumable_constraint(
+            "slots", pe_count, ge_queue, ge_env, list(all_hostgroups)
+        )
         # this is not colocated, so we can skip the redirection
         return [Job(job_id, constraints, iterations=num_tasks)]
 
-    elif pe.allocation_rule.name in ["$round_robin", "$fill_up"]:
-        constraints[0][slots_key] = 1
+    elif pe.allocation_rule.name == "$round_robin":
+        constraints[0] = make_quota_bound_consumable_constraint(
+            "slots", 1, ge_queue, ge_env, list(all_hostgroups)
+        )
+
+        def job_constructor(job_id: str) -> Job:
+            return Job(
+                job_id,
+                constraints,
+                node_count=pe_count,
+                colocated=True,
+                packing_strategy="pack",
+            )
+
+    elif pe.allocation_rule.name == "$fill_up":
+        constraints[0] = make_quota_bound_consumable_constraint(
+            "slots", 1, ge_queue, ge_env, list(all_hostgroups)
+        )
 
         def job_constructor(job_id: str) -> Job:
             return Job(
@@ -1284,13 +1334,13 @@ def _pe_job(
         )
         return None
 
-    if array_size == 1:
-        # not an array, do the simple thing
-        return [job_constructor(job_id)]
-
-    ret = []
+    ret: List[Job] = []
     for t in range(array_size):
-        ret.append(job_constructor("{}.{}".format(job_id, t)))
+        task_id = job_id if array_size == 1 else "{}.{}".format(job_id, t)
+        # not an array, do the simple thing
+        job = job_constructor(task_id)
+
+        ret.append(job)
     return ret
 
 
@@ -1404,27 +1454,46 @@ class HostgroupConstraint(BaseNodeConstraint):
     def to_dict(self) -> Dict:
         return {
             "hostgroup-and-pg": {
-                "hostgroup": self.hostgroup.name,
+                "hostgroup": self.hostgroup.to_dict(),
+                "user": self.user,
+                "project": self.project,
                 "placement-group": self.placement_group,
                 "seq-no": self.hostgroup.seq_no,
-                "constraints": self.get_children(),
+                "constraints": [x.to_dict() for x in self.get_children()],
             }
         }
 
     @staticmethod
     def from_dict(d: Dict) -> NodeConstraint:
-        if set(d.keys()) != set(["queue-and-hostgroups"]):
-            raise RuntimeError(
-                "Unexpected dictionary for QueueAndHostgroups: {}".format(d)
-            )
+        raise RuntimeError("Not implemented yet: hostgroup-and-pg")
+        # if set(d.keys()) != set(["hostgroup-and-pg"]):
+        #     raise RuntimeError(
+        #         "Unexpected dictionary for QueueAndHostgroups: {}".format(d)
+        #     )
 
-        c = d["hostgroups-and-pg"]
-        # TODO validation
-        specified = set(c.keys())
-        valid = set(["hostgroups", "placement-group"])
-        unexpected = specified - valid
-        assert not unexpected, "Unexpected attribute - {}".format(unexpected)
-        return HostgroupConstraint(c["hostgroups"], c.get("placement-group"))
+        # c = d["hostgroup-and-pg"]
+        # # TODO validation
+        # specified = set(c.keys())
+        # valid = set(
+        #     [
+        #         "hostgroup",
+        #         "user",
+        #         "project",
+        #         "placement-group",
+        #         "seq-no",
+        #         "placement-group",
+        #         "constraints",
+        #     ]
+        # )
+        # unexpected = specified - valid
+        # assert not unexpected, "Unexpected attribute - {}".format(unexpected)
+
+        # return HostgroupConstraint(
+        #     BoundHostgroup.from_dict(c["hostgroup"]),
+        #     c.get("placement-group"),
+        #     c.get("user"),
+        #     c.get("project"),
+        # )
 
 
 class GENodeQueue(NodeQueue):
@@ -1444,7 +1513,7 @@ class GENodeQueue(NodeQueue):
         # return EarlyBailoutResult("NoSlots", node, ["No more slots/ncpus remaining"])
 
 
-register_parser("hostgroups-and-pg", HostgroupConstraint.from_dict)
+register_parser("hostgroup-and-pg", HostgroupConstraint.from_dict)
 
 
 def _parse_tasks(expr: str) -> int:

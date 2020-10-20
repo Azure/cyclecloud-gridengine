@@ -41,10 +41,13 @@ class Hostgroup:
         return {
             "hostgroup": {
                 "name": self.name,
-                "members": self.members,
-                "constraints": self.constraints,
+                "constraints": [x.to_dict() for x in self.constraints],
             }
         }
+
+    @classmethod
+    def from_dict(self, d: Dict) -> "Hostgroup":
+        return Hostgroup(d["hostgroup"]["name"], d["hostgroup"]["constraints"])
 
     def __repr__(self) -> str:
         return "Hostgroup({}, constraints={})".format(self.name, self.constraints)
@@ -171,6 +174,11 @@ class BoundHostgroup:
             return cons[0]
 
         return And(*cons)
+
+    def to_dict(self) -> Dict:
+        return {
+            "hostgroup": self.__hostgroup.to_dict(),
+        }
 
     def __repr__(self) -> str:
         return "{}@{}".format(self.queue.qname, self.__hostgroup)

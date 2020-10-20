@@ -1,13 +1,13 @@
 import os
 from typing import Dict, List, Optional
 
-import pytest
 from hpc.autoscale import hpclogging
 from hpc.autoscale.ccbindings.mock import MockClusterBinding
 from hpc.autoscale.hpctypes import Memory
 from hpc.autoscale.job import demandprinter
 from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.job.job import Job
+from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.nodehistory import NullNodeHistory
 from hpc.autoscale.results import DefaultContextHandler, register_result_handler
 from hpc.autoscale.util import partition, partition_single
@@ -31,6 +31,7 @@ CONTEXT = DefaultContextHandler("[default]")
 def setup_module() -> None:
     hpclogging.initialize_logging(mock_config(None))
     register_result_handler(CONTEXT)
+    SchedulerNode.ignore_hostnames = True
 
 
 def test_non_exclusive_htc_arrays() -> None:
@@ -71,7 +72,6 @@ def test_non_exclusive_htc_arrays() -> None:
 
 
 # Until quota preprocessing is fixed in tests
-@pytest.mark.skip
 def test_non_exclusive_htc_jobs() -> None:
     # ask for exactly the available count 10
     # 4 2gb slots with an 8gb vm_size
@@ -84,7 +84,7 @@ def test_non_exclusive_htc_jobs() -> None:
     common_cluster_test(3 * ["-l slots=2 -q htc.q sleep.sh"], htc=2)
     common_cluster_test(4 * ["-l slots=2 -q htc.q sleep.sh"], htc=2)
     # ask for 100 jobs. We only have 10 4 slot nodes though.
-    common_cluster_test(100 * ["-l slots=2 -q htc.q sleep.sh"], htc=10)
+    common_cluster_test(["-l slots=2 -q htc.q  -t 1-100 sleep.sh"], htc=10)
 
 
 def test_complex_shortcut_parsing() -> None:
@@ -101,7 +101,6 @@ def test_complex_shortcut_parsing() -> None:
 
 
 # Until quota preprocessing is fixed in tests
-@pytest.mark.skip
 def test_complex_shortcut() -> None:
     # make sure that if a user mixes the shortcut and long form
     # we still handle that.
@@ -142,7 +141,6 @@ def test_complex_shortcut() -> None:
 
 
 # Until quota preprocessing is fixed in tests
-@pytest.mark.skip
 def test_fixed_iterative() -> None:
     # create 1 node, 1 node total
     created = 1
@@ -190,7 +188,6 @@ def test_fixed_iterative() -> None:
 
 
 # Until quota preprocessing is fixed in tests
-@pytest.mark.skip
 def test_fixed() -> None:
     # # ask for more than the available count 100
     common_cluster_test(["-pe fp* 101  -q hpc.q sleep.sh"])
@@ -236,8 +233,18 @@ def test_fixed() -> None:
     )
 
 
+def test_drill_down() -> None:
+    common_cluster_test(
+        [
+            "-l exclusive=true -l m_mem_free=1g -pe rr* 2  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
+        ],
+        pg_counts={"hpc_q_rr0": 5},
+        hpc=5,
+    )
+
+
 # Until quota preprocessing is fixed in tests
-@pytest.mark.skip
 def test_fill_up_and_round_robin() -> None:
     # With FillUp, GE will spread the processes across the machines as tightly as possible.
     # We are using an F4 here, so slots=4
@@ -253,7 +260,7 @@ def test_fill_up_and_round_robin() -> None:
         ["-pe fu* 20  -q hpc.q sleep.sh"], pg_counts={"hpc_q_fu0": 5}, hpc=5,
     )
     common_cluster_test(
-        ["-pe rr* 20  -q hpc.q sleep.sh"], pg_counts={"hpc_q_rr0": 5}, hpc=5,
+        ["-pe rr* 5  -q hpc.q sleep.sh"], pg_counts={"hpc_q_rr0": 5}, hpc=5,
     )
 
     # same, except split across two jobs
@@ -267,8 +274,8 @@ def test_fill_up_and_round_robin() -> None:
     )
     common_cluster_test(
         [
-            "-l exclusive=true -pe rr* 8  -q hpc.q sleep.sh",
-            "-l exclusive=true -pe rr* 12  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 2  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
         ],
         pg_counts={"hpc_q_rr0": 5},
         hpc=5,
@@ -285,8 +292,8 @@ def test_fill_up_and_round_robin() -> None:
     )
     common_cluster_test(
         [
-            "-l exclusive=true -pe rr* 12  -q hpc.q sleep.sh",
-            "-l exclusive=true -pe rr* 12  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
         ],
         pg_counts={"hpc_q_rr0": 3, "hpc_q_rr1": 3},
         hpc=6,
@@ -299,7 +306,7 @@ def test_fill_up_and_round_robin() -> None:
         hpc=9,
     )
     common_cluster_test(
-        ["-l exclusive=true -pe rr* 12 -q hpc.q sleep.sh"] * 4,
+        ["-l exclusive=true -pe rr* 3 -q hpc.q sleep.sh"] * 4,
         pg_counts={"hpc_q_rr2": 3, "hpc_q_rr1": 3, "hpc_q_rr0": 3},
         hpc=9,
     )
@@ -311,7 +318,7 @@ def test_fill_up_and_round_robin() -> None:
         hpc=9,
     )
     common_cluster_test(
-        ["-l exclusive=true -pe rr* 12 -t 1-4 -q hpc.q sleep.sh"],
+        ["-l exclusive=true -pe rr* 3 -t 1-4 -q hpc.q sleep.sh"],
         pg_counts={"hpc_q_rr2": 3, "hpc_q_rr1": 3, "hpc_q_rr0": 3},
         hpc=9,
     )
@@ -327,7 +334,6 @@ def _job(qsub_cmd: str, job_id: int) -> Job:
 
 
 # Until quota preprocessing is fixed in tests
-@pytest.mark.skip
 def test_overalocation_bug() -> None:
     qsub_cmds = [
         "-l exclusive=1 -pe rr* 12 -q hpc.q sleep 100",
@@ -357,7 +363,6 @@ def mock_config(bindings: MockClusterBinding) -> Dict:
             {"name": "m_mem_free", "select": {}, "value": "node.resources.memgb"},
             {"name": "mfree", "select": {}, "value": "node.resources.m_mem_free"},
         ],
-        "nodearrays": {"hpc": {"placement_groups": pgs}},
     }
 
 
@@ -438,13 +443,9 @@ def common_cluster(
     mdriver = mock_driver.MockGridEngineDriver(ge_env)
 
     ge_env.jobs.extend(jobs)
-
+    config = mdriver.preprocess_config(mock_config(_bindings()))
     return autoscaler.calculate_demand(
-        mock_config(_bindings()),
-        ge_env,
-        mdriver,
-        CONTEXT,
-        node_history=NullNodeHistory(),
+        config, ge_env, mdriver, CONTEXT, node_history=NullNodeHistory(),
     )
 
 

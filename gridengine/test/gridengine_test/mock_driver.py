@@ -10,7 +10,7 @@ from hpc.autoscale.job.schedulernode import SchedulerNode
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.results import EarlyBailoutResult
 
-from gridengine.driver import GENodeQueue, _parse_jobs
+from gridengine.driver import GENodeQueue, GridEngineDriver, _parse_jobs
 from gridengine.environment import GridEngineEnvironment
 
 
@@ -102,7 +102,9 @@ class MockQsub:
     def parse_jobs(self) -> List[Job]:
         ret = _parse_jobs(self.doc, self.ge_env)
 
-        # from gridengine import util; util.json_dump(ret)
+        from gridengine import util
+
+        util.json_dump(ret)
         return ret
 
 
@@ -118,7 +120,8 @@ class MockGridEngineDriver:
         return EarlyBailoutResult("success")
 
     def preprocess_config(self, config: Dict) -> Dict:
-        return config
+        conf = GridEngineDriver(config, self.ge_env).preprocess_config(config)
+        return conf
 
     def handle_failed_nodes(self, nodes: List[Node]) -> List[Node]:
         return []
