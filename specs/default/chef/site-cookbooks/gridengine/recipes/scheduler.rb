@@ -179,7 +179,7 @@ sge_services.each do |sge_service|
       :gridenginecell => gridenginecell
     )
   end
-  sge_service_names.append(sge_service_name)
+  sge_service_names.push(sge_service_name)
 end
 
 sge_execd_service = sge_service_names[0]
