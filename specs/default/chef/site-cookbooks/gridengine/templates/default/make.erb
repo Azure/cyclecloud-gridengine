@@ -1,0 +1,22 @@
+pe_name            make
+slots              999
+user_lists         NONE
+xuser_lists        NONE
+start_proc_args    NONE
+stop_proc_args     NONE
+allocation_rule    $round_robin
+control_slaves     TRUE
+job_is_first_task  FALSE
+urgency_slots      min
+accounting_summary TRUE
+<% if node[:gridengine][:version].index("8.1") == 0 %>
+qsort_args         NONE
+<% end %>
+<% if node[:gridengine][:make]=='ge' %>
+daemon_forks_slaves    FALSE
+master_forks_slaves    FALSE
+<% end %>
+<% if node[:gridengine][:make]=='ge' && Gem::Version.new(node[:gridengine][:version]) >= Gem::Version.new('8.6.0') %>
+per_pe_task_prolog     NONE
+per_pe_task_epilog     NONE
+<% end %>

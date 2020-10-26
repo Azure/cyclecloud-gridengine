@@ -53,57 +53,6 @@ Autoscale = $Autoscale
         export_path = $AdditionalNFSExportPath
         options = $AdditionalNFSMountOptions
 
-    [[node scheduler]]
-    MachineType = $SchedulerMachineType
-    ImageName = $SchedulerImageName
-    IsReturnProxy = $ReturnProxy
-    AdditionalClusterInitSpecs = $SchedulerClusterInitSpecs
-    
-        [[[configuration]]]
-        cyclecloud.mounts.nfs_sched.disabled = true
-        cyclecloud.mounts.nfs_shared.disabled = ${NFSType != "External"}
-
-        [[[cluster-init cyclecloud/gridengine:scheduler]]]
-
-        [[[network-interface eth0]]]
-        AssociatePublicIpAddress = $UsePublicNetwork
-
-        [[[input-endpoint ganglia]]]
-        PrivatePort = 8652
-        PublicPort = 8652
-
-        [[[volume sched]]]
-        Size = 1024
-        SSD = True
-        Mount = builtinsched
-        Persistent = False
-
-        [[[volume shared]]]
-        Size = ${ifThenElse(NFSType == "Builtin", FilesystemSize, 2)}
-        SSD = True
-        Mount = builtinshared
-        Persistent = ${NFSType == "Builtin"}
-
-        [[[configuration cyclecloud.mounts.builtinsched]]]
-        mountpoint = /sched
-        fs_type = xfs
-
-        [[[configuration cyclecloud.mounts.builtinshared]]]
-        disabled = ${NFSType != "Builtin"}
-        mountpoint = /shared
-        fs_type = xfs
-
-        [[[configuration cyclecloud.exports.builtinsched]]]
-        export_path = /sched
-        options = no_root_squash
-        samba.enabled = false
-        type = nfs
-
-        [[[configuration cyclecloud.exports.builtinshared]]]
-        disabled = ${NFSType != "Builtin"}
-        export_path = /shared
-        samba.enabled = false
-        type = nfs
 
     [[nodearray hpc]]
     MachineType = $HPCMachineType
@@ -169,12 +118,6 @@ Order = 10
         Description = Deployment Location
         ParameterType = Cloud.Region
         DefaultValue = westus2
-
-        [[[parameter SchedulerMachineType]]]
-        Label = Scheduler VM Type
-        Description = The VM type for scheduler and shared filer.
-        ParameterType = Cloud.MachineType
-        DefaultValue = Standard_D12_v2
 
         [[[parameter HPCMachineType]]]
         Label = Execute VM Type
@@ -257,44 +200,23 @@ Order = 15
         [[[parameter About shared]]]
         HideLabel = true
         Config.Plugin = pico.widget.HtmlTemplateWidget
-        Config.Template := "<p>The directory <code>/shared</code> is a network attached mount and exists in all nodes of the cluster. Users' home directories reside within this mountpoint with the base homedir <code>/shared/home</code>.<br><br>There are two options for providing this mount:<br> <strong>[Builtin]</strong>: The scheduler node is an NFS server that provides the mountpoint to the other nodes of the cluster.<br> <strong>[External NFS]</strong>: A network attached storage such as Azure Netapp Files, HPC Cache, or another VM running an NFS server, provides the mountpoint.</p>"
+        Config.Template := "<p>The directory <code>/shared</code> is a network attached mount and exists in all nodes of the cluster. Users' home directories reside within this mountpoint with the base homedir <code>/shared/home</code>.</p>"
         Order = 20
-
-        [[[parameter NFSType]]]
-        Label = NFS Type
-        ParameterType = StringList
-        Config.Label = Type of NFS to use for this cluster
-        Config.Plugin = pico.form.Dropdown
-        Config.Entries := {[Label="External NFS"; Value="External"], [Label="Builtin"; Value="Builtin"]}
-        DefaultValue = Builtin
 
         [[[parameter NFSAddress]]]
         Label = NFS IP Address
         Description = The IP address or hostname of the NFS server. Also accepts a list comma-separated addresses, for example, to mount a frontend load-balanced Azure HPC Cache.
         Config.ParameterType = String
-        Conditions.Hidden := NFSType != "External"
 
         [[[parameter NFSSharedExportPath]]]
         Label = Shared Export Path
         Description = The path exported by the file system
         DefaultValue = /shared
-        Conditions.Hidden := NFSType != "External"
 
         [[[parameter NFSSharedMountOptions]]]
         Label = NFS Mount Options
         Description = NFS Client Mount Options
-        Conditions.Hidden := NFSType != "External"
 
-        [[[parameter FilesystemSize]]]
-        Label = Size (GB)
-        Description = The filesystem size
-        DefaultValue = 100
-
-        Config.Plugin = pico.form.NumberTextBox
-        Config.MinValue = 10
-        Config.MaxValue = 10240
-        Config.IntegerOnly = true
-        Conditions.Excluded := NFSType != "Builtin"
 
     [[parameters Additional NFS Mount]]
     Order = 20
@@ -347,18 +269,11 @@ Order = 20
     [[parameters Grid Engine Settings ]]
     Description = "Section for configuring Grid Engine"
     Order = 5
-
-        
+      
 
     [[parameters Software]]
     Description = "Specify the scheduling software, and base OS installed on all nodes, and optionally the cluster-init and chef versions from your Locker."
     Order = 10
-
-        [[[parameter SchedulerImageName]]]
-        Label = Scheduler Base OS
-        ParameterType = Cloud.Image
-        Config.OS = linux
-        DefaultValue = cycle.image.centos7
 
         [[[parameter HPCImageName]]]
         Label = HPC Base OS
@@ -371,12 +286,6 @@ Order = 20
         ParameterType = Cloud.Image
         Config.OS = linux
         DefaultValue = cycle.image.centos7
-
-        [[[parameter SchedulerClusterInitSpecs]]]
-        Label = Scheduler Cluster-Init
-        DefaultValue = =undefined
-        Description = Cluster init specs to apply to the scheduler node
-        ParameterType = Cloud.ClusterInitSpecs
     
         [[[parameter HPCClusterInitSpecs]]]
         Label = HPC Cluster-Init

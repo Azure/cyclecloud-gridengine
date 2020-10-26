@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"path": ".",
+			"name": "gridengine"
+		}
+	],
+	"settings": {
+		"java.autobuild.enabled": false,
+		"java.completion.enabled": false,
+		"java.dependency.autoRefresh": false,
+		"java.dependency.syncWithFolderExplorer": false,
+		"java.completion.overwrite": false,
+		"pythonTestExplorer.testFramework": "pytest",
+		"python.envFile": "${workspaceFolder}/.env",
+		"python.testing.pytestArgs": [
+			"--rootdir=test"
+		],
+		"python.testing.pytestPath": "/Users/ryhamel/bin/pytestwrapper2",
+		"terminal.integrated.env.osx": {"PYTHONPATH": "src:test"}
+	},
+	
+}

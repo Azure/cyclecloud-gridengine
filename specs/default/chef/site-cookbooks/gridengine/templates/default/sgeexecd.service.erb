@@ -1,0 +1,12 @@
+[Unit]
+Description=Univa Grid Engine Execd
+After=network.target remote-fs.target
+
+[Service]
+Type=forking
+KillMode=process
+ExecStart=<%= @gridengineroot %>/<%= @gridenginecell %>/common/sgeexecd start
+ExecStop=<%= @gridengineroot %>/<%= @gridenginecell %>/common/sgeexecd stop
+
+[Install]
+WantedBy=multi-user.target

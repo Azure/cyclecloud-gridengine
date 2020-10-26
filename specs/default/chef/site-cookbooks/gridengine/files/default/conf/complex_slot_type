@@ -1,0 +1,11 @@
+name        slot_type
+shortcut    slot_type
+type        RESTRING
+relop       ==
+requestable YES
+consumable  NO
+default     NONE
+urgency     0
+aapre       NO
+affinity    0.000000
+

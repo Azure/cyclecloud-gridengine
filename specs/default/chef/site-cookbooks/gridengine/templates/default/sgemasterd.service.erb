@@ -1,0 +1,11 @@
+[Unit]
+Description=Univa Grid Engine Qmaster
+After=network.target remote-fs.target
+
+[Service]
+Type=forking
+ExecStart=<%= @gridengineroot %>/<%= @gridenginecell %>/common/sgemaster start
+ExecStop=<%= @gridengineroot %>/<%= @gridenginecell %>/common/sgemaster stop
+
+[Install]
+WantedBy=multi-user.target

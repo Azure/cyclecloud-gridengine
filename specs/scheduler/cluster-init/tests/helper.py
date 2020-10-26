@@ -1,4 +1,8 @@
-from jetpack import config
+try:
+    from jetpack import config
+except ModuleNotFoundError as e:
+    traceback.print_exception()
+    
 import subprocess
 import os
 import sys
