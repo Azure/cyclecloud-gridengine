@@ -244,7 +244,7 @@ class Try(Monad, Ord):
     def failed(self):
         """Return a Boolean that indicates if the value is an instance of Failure
 
-        >>> Failure('shit is fucked up').failed()
+        >>> Failure('things are broken').failed()
         True
         >>> Success('it worked!').failed()
         False
