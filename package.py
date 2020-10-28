@@ -1,19 +1,35 @@
 import argparse
 import configparser
+import glob
 import os
+import shutil
 import sys
 import tarfile
 import tempfile
+from argparse import Namespace
 from subprocess import check_call
 from typing import List, Optional
-from argparse import Namespace
 
 SCALELIB_VERSION = "0.1.2"
 CYCLECLOUD_API_VERSION = "8.0.1"
 
 
+def build_sdist() -> str:
+    cmd = [sys.executable, "setup.py", "sdist"]
+    check_call(cmd, cwd=os.path.abspath("gridengine"))
+    sdists = glob.glob("gridengine/dist/cyclecloud-gridengine-*.tar.gz")
+    assert len(sdists) == 1, "Found %d sdist packages, expected 1" % len(sdists)
+    path = sdists[0]
+    fname = os.path.basename(path)
+    dest = os.path.join("libs", fname)
+    if os.path.exists(dest):
+        os.remove(dest)
+    shutil.move(path, dest)
+    return fname
+
+
 def get_cycle_libs(args: Namespace) -> List[str]:
-    ret = ["cyclecloud-gridengine-2.0.1.tar.gz"]
+    ret = [build_sdist()]
 
     scalelib_file = "cyclecloud-scalelib-{}.tar.gz".format(SCALELIB_VERSION)
     cyclecloud_api_file = "cyclecloud_api-{}-py2.py3-none-any.whl".format(
@@ -35,10 +51,17 @@ def get_cycle_libs(args: Namespace) -> List[str]:
             if not os.path.exists(arg_override):
                 print(arg_override, "does not exist", file=sys.stderr)
                 sys.exit(1)
-            ret.append(arg_override)
+            fname = os.path.basename(arg_override)
+            orig = os.path.abspath(arg_override)
+            dest = os.path.abspath(os.path.join("libs", fname))
+            if orig != dest:
+                shutil.copyfile(orig, dest)
+            ret.append(fname)
         else:
-            check_call(["curl", "-L", "-k", "-s", "-o", lib_file, url])
+            dest = os.path.join("libs", lib_file)
+            check_call(["curl", "-L", "-k", "-s", "-o", dest, url])
             ret.append(lib_file)
+            print("Downloaded", lib_file, "to")
 
     return ret
 
