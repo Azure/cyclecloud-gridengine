@@ -15,6 +15,7 @@ from hpc.autoscale.util import SingletonLock, json_load
 
 from gridengine import environment as envlib
 from gridengine.environment import GridEngineEnvironment
+from gridengine.util import get_node_hostgroups
 
 if typing.TYPE_CHECKING:
     from gridengine.driver import GridEngineDriver
@@ -260,9 +261,8 @@ def calculate_demand(
         demand_calculator.add_job(job)
 
     for node in demand_calculator.node_mgr.get_nodes():
-        node.available["hostgroups"] = node.software_configuration[
-            "gridengine_hostgroups"
-        ]
+        node.available["hostgroups"] = get_node_hostgroups(node)
+
     return demand_calculator
 
 
