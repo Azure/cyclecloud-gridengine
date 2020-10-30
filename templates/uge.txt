@@ -41,7 +41,7 @@ Autoscale = $Autoscale
         cshared.server.legacy_links_disabled = true
 
         #[[[cluster-init cyclecloud/gridengine:default]]]
-        [[[cluster-init gridengine:default:2.0.0]]]
+        [[[cluster-init gridengine:default:2.0.1]]]
         Optional = true
 
         [[[configuration cyclecloud.mounts.nfs_shared]]]
@@ -74,7 +74,7 @@ Autoscale = $Autoscale
         cyclecloud.mounts.nfs_shared.disabled = ${NFSType != "External"}
 
         #[[[cluster-init cyclecloud/gridengine:scheduler]]]
-        [[[cluster-init gridengine:scheduler:2.0.0]]]
+        [[[cluster-init gridengine:scheduler:2.0.1]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $UsePublicNetwork
@@ -132,7 +132,7 @@ Autoscale = $Autoscale
         #gridengine.qname = hpc.q
 
         #[[[cluster-init cyclecloud/gridengine:execute]]]
-        [[[cluster-init gridengine:execute:2.0.0]]]
+        [[[cluster-init gridengine:execute:2.0.1]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $ExecuteNodesPublic
@@ -154,7 +154,7 @@ Autoscale = $Autoscale
         #gridengine.qname = htc.q
 
         #[[[cluster-init cyclecloud/gridengine:execute]]]
-        [[[cluster-init gridengine:execute:2.0.0]]]
+        [[[cluster-init gridengine:execute:2.0.1]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $ExecuteNodesPublic

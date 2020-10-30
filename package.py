@@ -6,32 +6,41 @@ import tarfile
 import tempfile
 from subprocess import check_call
 from typing import List, Optional
+from argparse import Namespace
 
-SCALELIB_VERSION = "0.1.1"
+SCALELIB_VERSION = "0.1.2"
+CYCLECLOUD_API_VERSION = "8.0.1"
 
 
-def get_cycle_libs() -> List[str]:
-    LIBS = [
-        "cyclecloud_api-8.0.1-py2.py3-none-any.whl",
-        "cyclecloud-gridengine-2.0.0.tar.gz",
-    ]
+def get_cycle_libs(args: Namespace) -> List[str]:
+    ret = ["cyclecloud-gridengine-2.0.1.tar.gz"]
 
-    url = "https://github.com/Azure/cyclecloud-scalelib/archive/{}.tar.gz".format(
+    scalelib_file = "cyclecloud-scalelib-{}.tar.gz".format(SCALELIB_VERSION)
+    cyclecloud_api_file = "cyclecloud_api-{}-py2.py3-none-any.whl".format(
+        CYCLECLOUD_API_VERSION
+    )
+
+    scalelib_url = "https://github.com/Azure/cyclecloud-scalelib/archive/{}.tar.gz".format(
         SCALELIB_VERSION
     )
-    lib_file = "cyclecloud-scalelib-{}.tar.gz".format(SCALELIB_VERSION)
-    
-    argument_parser = argparse.ArgumentParser()
-    argument_parser.add_argument("--scalelib", default=None)
-    args = argument_parser.parse_args()
-    if args.scalelib:
-        if not os.path.exists(args.scalelib):
-            print(args.scalelib, "does not exist", file=sys.stderr)
-            sys.exit(1)
-        return LIBS + [args.scalelib]
+    cyclecloud_api_url = "https://github.com/Azure/cyclecloud-gridengine/releases/download/2.0.0/cyclecloud_api-8.0.1-py2.py3-none-any.whl"
+    to_download = {
+        scalelib_file: (args.scalelib, scalelib_url),
+        cyclecloud_api_file: (args.cyclecloud_api, cyclecloud_api_url),
+    }
 
-    check_call(["curl", "-L", "-k", "-s", "-o", lib_file, url])
-    return LIBS + [lib_file]
+    for lib_file in to_download:
+        arg_override, url = to_download[lib_file]
+        if arg_override:
+            if not os.path.exists(arg_override):
+                print(arg_override, "does not exist", file=sys.stderr)
+                sys.exit(1)
+            ret.append(arg_override)
+        else:
+            check_call(["curl", "-L", "-k", "-s", "-o", lib_file, url])
+            ret.append(lib_file)
+
+    return ret
 
 
 def execute() -> None:
@@ -40,8 +49,16 @@ def execute() -> None:
 
     if not os.path.exists("libs"):
         os.makedirs("libs")
-    
-    cycle_libs = get_cycle_libs()
+
+    argument_parser = argparse.ArgumentParser(
+        "Builds CycleCloud GridEngine project with all dependencies.\n"
+        + "If you don't specify local copies of scalelib or cyclecloud-api they will be downloaded from github."
+    )
+    argument_parser.add_argument("--scalelib", default=None)
+    argument_parser.add_argument("--cyclecloud-api", default=None)
+    args = argument_parser.parse_args()
+
+    cycle_libs = get_cycle_libs(args)
 
     parser = configparser.ConfigParser()
     ini_path = os.path.abspath("project.ini")
@@ -66,7 +83,7 @@ def execute() -> None:
         path = path or name
         tarinfo = tarfile.TarInfo("cyclecloud-gridengine/" + name)
         tarinfo.size = os.path.getsize(path)
-        tarinfo.mtime = os.path.getmtime(path)
+        tarinfo.mtime = int(os.path.getmtime(path))
         if mode:
             tarinfo.mode = mode
 
