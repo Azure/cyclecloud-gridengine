@@ -77,15 +77,6 @@ class GridEngineQueue:
         if queue_config["pe_list"] and queue_config["pe_list"].lower() != "none":
             assert self.__parallel_environments, queue_config["pe_list"]
 
-        all_host_groups = set(self.hostlist)
-        for pe in self.__parallel_environments.values():
-            if pe.requires_placement_groups:
-                all_host_groups = all_host_groups - set(
-                    self.get_hostgroups_for_pe(pe.name)
-                )
-
-        self.__ht_hostgroups = [x for x in list(all_host_groups) if x.startswith("@")]
-
         self.user_lists = parse_hostgroup_mapping(
             queue_config.get("user_lists") or "", self.hostlist_groups, filter_none=True
         )
@@ -100,6 +91,30 @@ class GridEngineQueue:
         self.xprojects = parse_hostgroup_mapping(
             queue_config.get("xprojects") or "", self.hostlist_groups, filter_none=True
         )
+
+        hostgroup_mappings = (
+            [list(self.complex_values.keys())]
+            + list(self.__pe_to_hostgroups.values())
+            + [list(self.seq_no.keys())]
+            + [list(self.user_lists.keys())]
+            + [list(self.xuser_lists.keys())]
+            + [list(self.projects.keys())]
+            + [list(self.xprojects.keys())]
+        )
+        for hg_names in hostgroup_mappings:
+            for hg_name in hg_names:
+                if hg_name and hg_name not in self.__hostlist:
+                    self.__hostlist.append(hg_name)
+
+        all_host_groups = set(self.hostlist)
+        for pe in self.__parallel_environments.values():
+            if pe.requires_placement_groups:
+                all_host_groups = all_host_groups - set(
+                    self.get_hostgroups_for_pe(pe.name)
+                )
+
+        self.__ht_hostgroups = [x for x in list(all_host_groups) if x.startswith("@")]
+
         self.__bound_hostgroups: Dict[str, BoundHostgroup] = {}
 
         for hg_name in self.hostlist_groups:
