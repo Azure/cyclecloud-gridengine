@@ -862,8 +862,6 @@ def _parse_scheduler_nodes(
                 # actual host complex, not just a quota constraint
                 # host complexes can go to .available/resources but
                 # quota constraints are namespaced.
-                if complex.name == "exclusive":
-                    assert complex.is_excl  # TODO RDH
                 if complex.is_excl:
                     resources["exclusive"] = complex.parse(text)
                     continue
@@ -872,10 +870,9 @@ def _parse_scheduler_nodes(
                 shortcut_key = "{}@{}".format(queue_name, complex.shortcut)
                 resources[name_key] = complex.parse(text)
                 resources[shortcut_key] = complex.parse(text)
-                if is_quota_complex:
+                if not is_quota_complex:
                     resources[complex.name] = complex.parse(text)
                     resources[complex.shortcut] = resources[complex.name]
-                    resources["debug_" + complex.name] = resources[complex.name]
 
         if hostname in compute_nodes:
             compute_node = compute_nodes[hostname]
