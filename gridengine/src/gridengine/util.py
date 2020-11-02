@@ -1,12 +1,14 @@
 import json
 import re
 import sys
+import typing
 from io import StringIO
 from typing import Any, Dict, List, Optional, Union
 
 from hpc.autoscale.node.node import Node
 
-from gridengine.hostgroup import BoundHostgroup, Hostgroup
+if typing.TYPE_CHECKING:
+    from gridengine.hostgroup import BoundHostgroup, Hostgroup  # noqa: F401
 
 
 def flatten_lines(lines: List[str]) -> List[str]:
@@ -64,7 +66,7 @@ def get_node_hostgroups(node: Node) -> List[str]:
 
 
 def add_node_to_hostgroup(
-    node: Node, hostgroup: Union[BoundHostgroup, Hostgroup]
+    node: Node, hostgroup: Union["BoundHostgroup", "Hostgroup"]
 ) -> None:
     def _node_override(node: Node) -> Dict:
         c = node.node_attribute_overrides.get("Configuration", {})

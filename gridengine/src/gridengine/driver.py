@@ -3,6 +3,7 @@ import math
 import os
 import socket
 import tempfile
+from copy import deepcopy
 from subprocess import CalledProcessError
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from xml.etree import ElementTree
@@ -30,13 +31,9 @@ from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
 from gridengine import environment as envlib
 from gridengine import validate as validatelib
 from gridengine.allocation_rules import FixedProcesses
-from gridengine.complex import (
-    Complex,
-    QuotaConstraint,
-    make_quota_bound_consumable_constraint,
-)
+from gridengine.complex import Complex
 from gridengine.environment import GridEngineEnvironment
-from gridengine.hostgroup import BoundHostgroup
+from gridengine.hostgroup import BoundHostgroup, QuotaConstraint
 from gridengine.parallel_environments import ParallelEnvironment
 from gridengine.qbin import check_output
 from gridengine.queue import GridEngineQueue
@@ -611,15 +608,36 @@ license_oversubscription NONE""".format(
         nodearrays["default"] = default = nodearrays.get("default", {})
         default["placement_groups"] = default_pgs = default.get("placement_groups", [])
 
-        if default_pgs:
-            return config
+        if not default_pgs:
+            for gqueue in self.ge_env.queues.values():
+                for pe in gqueue.get_pes():
+                    if pe:
+                        pe_pg_name = gqueue.get_placement_group(pe.name)
+                        if pe_pg_name:
+                            default_pgs.append(pe_pg_name)
 
-        for gqueue in self.ge_env.queues.values():
-            for pe in gqueue.get_pes():
-                if pe:
-                    pe_pg_name = gqueue.get_placement_group(pe.name)
-                    if pe_pg_name:
-                        default_pgs.append(pe_pg_name)
+            if "default_resources" not in config:
+                config["default_resources"] = []
+
+        # make sure that user doess not need to specify both shortcut and full name
+        new_default_resources = []
+        for dr in config["default_resources"]:
+            c = self.ge_env.unfiltered_complexes.get(dr.get("name"))
+            new_default_resources.append(dr)
+            assert c, "%s %s" % (dr, self.ge_env.complexes)
+            if not c:
+                continue
+            if c.name == c.shortcut:
+                continue
+
+            other_dr = deepcopy(dr)
+            if dr["name"] == c.name:
+                other_dr["name"] = c.shortcut
+            else:
+                other_dr["name"] = c.name
+            new_default_resources.append(other_dr)
+
+        config["default_resources"] = new_default_resources
 
         return config
 
@@ -1059,7 +1077,6 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
             ge_env=ge_env,
             job_resources=job_resources,
             constraints_out=constraints,
-            hostgroups=hostgroup_names,
         )
         for hg_name in hostgroup_names:
             hostgroup = ge_queue.bound_hostgroups.get(hg_name)
@@ -1071,8 +1088,9 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
                     )
                 )
 
+            child_constraint = hostgroup.make_constraint(ge_env, owner, project, constraints[0])  # type: ignore
             queue_and_hostgroup_constraints.append(
-                HostgroupConstraint(hostgroup, None, owner, project)
+                HostgroupConstraint(hostgroup, None, child_constraint)
             )
 
         if len(queue_and_hostgroup_constraints) > 1:
@@ -1109,7 +1127,6 @@ def _apply_constraints(
     ge_env: GridEngineEnvironment,
     job_resources: Dict,
     constraints_out: List[Constraint],
-    hostgroups: List[str],
 ) -> None:
     """
 
@@ -1153,35 +1170,18 @@ def _apply_constraints(
             if filter_if_time(complex):
                 continue
 
-            # TODO not sure this if is ever
-            if complex.name == "slots":
-                # ensure we don't double count slots if someone specifies it
-                assert isinstance(req_value, (int, float))
-                constraints_out[0] = make_quota_bound_consumable_constraint(
-                    "slots", req_value, ge_queue, ge_env, hostgroups
-                )
-            else:
-                if complex.is_excl:
-                    if complex.name == "complex":
-                        assert complex.is_excl
-                    constraints_out.append({complex.name: req_value})
-                else:
-                    constraints_out.append(
-                        make_quota_bound_consumable_constraint(
-                            complex.name,
-                            req_value,  # type: ignore
-                            ge_queue,
-                            ge_env,
-                            hostgroups,
-                        )
-                    )
+            if complex.is_excl:
+                constraints_out.append({complex.name: req_value})
+                continue
 
-                if complex.shortcut != complex.name and not complex.is_excl:
-                    # add in the shortcut as well
-                    constraints_out.append({complex.shortcut: req_value})
+            constraints_out[0][complex.name] = req_value
+
+            if complex.shortcut != complex.name and not complex.is_excl:
+                # add in the shortcut as well
+                constraints_out[0][complex.shortcut] = req_value
             job_resources[complex.name] = req_value
         else:
-            constraints_out.append({resource_name: req_value})
+            constraints_out[0][resource_name] = req_value
             job_resources[resource_name] = req_value
 
 
@@ -1231,40 +1231,36 @@ def _pe_job(
         )
         return None
 
-    queue_and_hostgroup_constraints = []
-    all_hostgroups = set()
-    for pe in pes:
-        hostgroups = ge_queue.get_hostgroups_for_pe(pe.name)
-        all_hostgroups.update(hostgroups)
-
-        pe_count = int(pe_elem.text)
-
-        # optional - can  be None if this is an htc style bucket.
-        placement_group = ge_queue.get_placement_group(pe.name)
-
-        for hg_name in hostgroups:
-            hostgroup = ge_queue.bound_hostgroups[hg_name]
-
-            queue_and_hostgroup_constraints.append(
-                HostgroupConstraint(hostgroup, placement_group, owner, project)
-            )
-
     pe = pes[0]
+    pe_count = int(pe_elem.text)
 
-    if len(queue_and_hostgroup_constraints) > 1:
-        constraints.append(XOr(*queue_and_hostgroup_constraints))
-    else:
-        constraints.append(queue_and_hostgroup_constraints[0])
+    def do_apply_constraints() -> None:
+        _apply_constraints(
+            jijle=jijle,
+            job_id=job_id,
+            ge_queue=ge_queue,
+            ge_env=ge_env,
+            job_resources={},
+            constraints_out=constraints,
+        )
+        queue_and_hostgroup_constraints = []
+        for pe in pes:
+            hostgroups = ge_queue.get_hostgroups_for_pe(pe.name)
 
-    _apply_constraints(
-        jijle=jijle,
-        job_id=job_id,
-        ge_queue=ge_queue,
-        ge_env=ge_env,
-        job_resources={},
-        constraints_out=constraints,
-        hostgroups=list(all_hostgroups),
-    )
+            # optional - can  be None if this is an htc style bucket.
+            placement_group = ge_queue.get_placement_group(pe.name)
+
+            for hg_name in hostgroups:
+                hostgroup = ge_queue.bound_hostgroups[hg_name]
+                child_constraint = hostgroup.make_constraint(ge_env, owner, project, constraints[0])  # type: ignore
+                queue_and_hostgroup_constraints.append(
+                    HostgroupConstraint(hostgroup, placement_group, child_constraint)
+                )
+
+        if len(queue_and_hostgroup_constraints) > 1:
+            constraints.append(XOr(*queue_and_hostgroup_constraints))
+        else:
+            constraints.append(queue_and_hostgroup_constraints[0])
 
     job_constructor: Callable[[str], Job]
 
@@ -1272,51 +1268,59 @@ def _pe_job(
         assert isinstance(pe.allocation_rule, FixedProcesses)
         alloc_rule: FixedProcesses = pe.allocation_rule  # type: ignore
         alloc_rule.fixed_processes
-        constraints[0] = make_quota_bound_consumable_constraint(
-            "slots", alloc_rule.fixed_processes, ge_queue, ge_env, list(all_hostgroups),
-        )
+        # constraints[0] = make_quota_bound_consumable_constraint(
+        #     "slots", alloc_rule.fixed_processes, ge_queue, ge_env, list(all_hostgroups),
+        # )
+        constraints[0]["slots"] = alloc_rule.fixed_processes
         num_nodes = int(math.ceil(slots / float(alloc_rule.fixed_processes)))
         constraints.append({"exclusive_task": True})
+        do_apply_constraints()
 
         def job_constructor(job_id: str) -> Job:
             return Job(
                 job_id,
-                constraints,
+                constraints[1:],
                 node_count=num_nodes,
                 colocated=True,
                 packing_strategy="scatter",
             )
 
     elif pe.allocation_rule.name == "$pe_slots":
-        constraints[0] = make_quota_bound_consumable_constraint(
-            "slots", pe_count, ge_queue, ge_env, list(all_hostgroups)
-        )
+        # constraints[0] = make_quota_bound_consumable_constraint(
+        #     "slots", pe_count, ge_queue, ge_env, list(all_hostgroups)
+        # )
+        constraints[0]["slots"] = pe_count
         # this is not colocated, so we can skip the redirection
-        return [Job(job_id, constraints, iterations=num_tasks)]
+        do_apply_constraints()
+        return [Job(job_id, constraints[1:], iterations=num_tasks)]
 
     elif pe.allocation_rule.name == "$round_robin":
-        constraints[0] = make_quota_bound_consumable_constraint(
-            "slots", 1, ge_queue, ge_env, list(all_hostgroups)
-        )
+        # constraints[0] = make_quota_bound_consumable_constraint(
+        #     "slots", 1, ge_queue, ge_env, list(all_hostgroups)
+        # )
+        constraints[0]["slots"] = 1
+        do_apply_constraints()
 
         def job_constructor(job_id: str) -> Job:
             return Job(
                 job_id,
-                constraints,
+                constraints[1:],
                 node_count=pe_count,
                 colocated=True,
                 packing_strategy="pack",
             )
 
     elif pe.allocation_rule.name == "$fill_up":
-        constraints[0] = make_quota_bound_consumable_constraint(
-            "slots", 1, ge_queue, ge_env, list(all_hostgroups)
-        )
+        # constraints[0] = make_quota_bound_consumable_constraint(
+        #     "slots", 1, ge_queue, ge_env, list(all_hostgroups)
+        # )
+        constraints[0]["slots"] = 1
+        do_apply_constraints()
 
         def job_constructor(job_id: str) -> Job:
             return Job(
                 job_id,
-                constraints,
+                constraints[1:],
                 iterations=pe_count,
                 colocated=True,
                 packing_strategy="pack",
@@ -1350,14 +1354,11 @@ class HostgroupConstraint(BaseNodeConstraint):
         self,
         hostgroup: BoundHostgroup,
         placement_group: Optional[ht.PlacementGroup],
-        user: Optional[str] = None,
-        project: Optional[str] = None,
+        child_constraint: Optional[NodeConstraint] = None,
     ) -> None:
         self.hostgroup = hostgroup
         self.placement_group = placement_group
-        self.user = user
-        self.project = project
-        self.child_constraint = self.hostgroup.make_constraint(user, project)
+        self.child_constraint = child_constraint
 
     def satisfied_by_node(self, node: Node) -> SatisfiedResult:
         if self.placement_group:
@@ -1441,7 +1442,26 @@ class HostgroupConstraint(BaseNodeConstraint):
         return True
 
     def get_children(self) -> List[NodeConstraint]:
-        return [self.child_constraint] if self.child_constraint else []
+        my_cons = [self.child_constraint] if self.child_constraint else []
+        return self.hostgroup.constraints + my_cons
+
+    def minimum_space(self, node: Node) -> int:
+        m = -1
+        for child in self.get_children():
+            child_min = child.minimum_space(node)
+            # doesn't fit
+            if child_min == 0:
+                return child_min
+
+            # no opinion (non-consumable constraints)
+            if child_min < 0:
+                continue
+
+            if m < 0:
+                m = child_min
+            m = min(m, child_min)
+
+        return m
 
     def __str__(self) -> str:
         return "HostgroupConstraint(hostgroup={}, placement_group={}, constraints={})".format(
@@ -1452,8 +1472,6 @@ class HostgroupConstraint(BaseNodeConstraint):
         return {
             "hostgroup-and-pg": {
                 "hostgroup": self.hostgroup.to_dict(),
-                "user": self.user,
-                "project": self.project,
                 "placement-group": self.placement_group,
                 "seq-no": self.hostgroup.seq_no,
                 "constraints": [x.to_dict() for x in self.get_children()],

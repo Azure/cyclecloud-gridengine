@@ -1,8 +1,7 @@
-from gridengine.queue import GridEngineQueue
-from gridengine.queue import parse_slots
-from gridengine.parallel_environments import ParallelEnvironment
-from gridengine.hostgroup import Hostgroup
 from gridengine.complex import Complex
+from gridengine.hostgroup import Hostgroup
+from gridengine.parallel_environments import ParallelEnvironment
+from gridengine.queue import GridEngineQueue, parse_slots
 
 
 def test_parse_slots() -> None:
@@ -16,7 +15,9 @@ def test_hostlist() -> None:
     "seqno, complex_values, slots, users..."
     pes = {
         "make": ParallelEnvironment({"pe_name": "make", "allocation_rule": "1"}),
-        "mpi": ParallelEnvironment({"pe_name": "mpi", "allocation_rule": "$round_robin"}),
+        "mpi": ParallelEnvironment(
+            {"pe_name": "mpi", "allocation_rule": "$round_robin"}
+        ),
     }
 
     queue_config = {
@@ -43,10 +44,13 @@ def test_hostlist() -> None:
         "@notreferenced": Hostgroup("@notreferenced"),
     }
 
-    complex_values = {None: {"pcpu": 2}, "@complexvalueshg": 1}
+    complex_values = {None: {"pcpu": 2}, "@complexvalueshg": {"pcpu": 1}}
 
     queue = GridEngineQueue(queue_config, pes, unbound_hostgroups, complex_values)
     assert "@complexvalueshg" in queue.complex_values
     unreferenced = set(unbound_hostgroups.keys()) - set(queue.hostlist)
     assert unreferenced == set(["@notreferenced"])
 
+    pcpu_c = Complex("pcpu", "p", "INT", "<=", True, True, "123", 100)
+    assert 1 == queue.get_quota(pcpu_c, "@complexvalueshg")
+    assert 2 == queue.get_quota(pcpu_c, "@asdf")

@@ -25,12 +25,12 @@ def test_projects() -> None:
 
     # no project, ben and random should never succeed
     # yes - GridEngine will NOT schedule a job if a project is not defined
-    assert isinstance(bh.make_constraint(project=None), Never)
-    assert isinstance(bh.make_constraint(project="prj2"), Never)
-    assert isinstance(bh.make_constraint(project="random"), Never)
+    assert isinstance(bh.make_constraint(ge_env, project=None), Never)
+    assert isinstance(bh.make_constraint(ge_env, project="prj2"), Never)
+    assert isinstance(bh.make_constraint(ge_env, project="random"), Never)
 
     # ok, the real constraint - project==prj1
-    prj1_cons = bh.make_constraint(project="prj1")
+    prj1_cons = bh.make_constraint(ge_env, project="prj1")
     assert isinstance(prj1_cons, And)
 
     node = SchedulerNode("tux")
@@ -53,12 +53,12 @@ def test_users() -> None:
     bh = BoundHostgroup(hpc_q, hg, 0)
 
     # no user, ben and random should never succeed
-    assert isinstance(bh.make_constraint(user=None), Never)
-    assert isinstance(bh.make_constraint(user="ben"), Never)
-    assert isinstance(bh.make_constraint(user="random"), Never)
+    assert isinstance(bh.make_constraint(ge_env, user=None), Never)
+    assert isinstance(bh.make_constraint(ge_env, user="ben"), Never)
+    assert isinstance(bh.make_constraint(ge_env, user="random"), Never)
 
     # ok, the real constraint - user==ryan
-    user_cons = bh.make_constraint(user="ryan")
+    user_cons = bh.make_constraint(ge_env, user="ryan")
     assert isinstance(user_cons, And)
 
     node = SchedulerNode("tux")

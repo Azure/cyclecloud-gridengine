@@ -1,6 +1,6 @@
 import re
 import typing
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale import hpctypes as ht
@@ -148,7 +148,7 @@ class GridEngineQueue:
         return self.__bound_hostgroups
 
     def get_quota(
-        self, node: Node, complex_name: Union[str, "Complex"], hostgroup: str
+        self, complex: "Complex", hostgroup: str, node: Optional[Node] = None,
     ) -> Optional[Any]:
         """
         With quotas, the default quota is not inherited if a hostgroup is defined. i.e.
@@ -165,20 +165,26 @@ class GridEngineQueue:
 
         So simply defining [@Standard_2=] with anything removes the default
         """
-        if not isinstance(complex_name, str):
-            complex_name = complex_name.name
 
         cv_for_hg = self.complex_values.get(hostgroup)
         if cv_for_hg:
             # if the hostgroup is defined, I don't care what the non-hg versions
-            return cv_for_hg.get(complex_name)
+            if complex.name in cv_for_hg:
+                return cv_for_hg[complex.name]
+            if complex.shortcut in cv_for_hg:
+                return cv_for_hg[complex.shortcut]
 
         default_cv = self.complex_values.get(None)  # type: ignore
-        if default_cv and complex_name in default_cv:
-            return default_cv[complex_name]
+        if default_cv and complex.name in default_cv:
+            return default_cv[complex.name]
+        if default_cv and complex.shortcut in default_cv:
+            return default_cv[complex.shortcut]
 
-        if complex_name in node.available:
-            return node.available[complex_name]
+        if node and complex.name in node.available:
+            return node.available[complex.name]
+
+        if node and complex.shortcut in node.available:
+            return node.available[complex.shortcut]
 
         return None
 

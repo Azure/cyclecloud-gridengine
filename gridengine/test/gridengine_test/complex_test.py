@@ -4,13 +4,8 @@ from unittest import mock
 from hpc.autoscale.hpctypes import Memory
 from hpc.autoscale.job.schedulernode import SchedulerNode
 
-from gridengine.complex import (
-    Complex,
-    make_quota_bound_consumable_constraint,
-    parse_queue_complex_values,
-    process_quotas,
-    read_complexes,
-)
+from gridengine.complex import Complex, parse_queue_complex_values, read_complexes
+from gridengine.hostgroup import make_quota_bound_consumable_constraint, process_quotas
 from gridengine.qbin import QBinImpl
 from gridengine.util import json_dump
 from gridengine_test.autoscaler_test import common_ge_env

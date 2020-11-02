@@ -479,6 +479,8 @@ def common_ge_env(
     for c in [SLOTS_COMPLEX, MFREE_COMPLEX, EXCL_COMPLEX]:
         ge_env.complexes[c.name] = c
         ge_env.complexes[c.shortcut] = c
+        ge_env.unfiltered_complexes[c.name] = c
+        ge_env.unfiltered_complexes[c.shortcut] = c
 
     ge_env.add_queue(
         new_gequeue(

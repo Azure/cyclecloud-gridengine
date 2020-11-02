@@ -86,15 +86,39 @@ def test_preprocess_configs() -> None:
         b.name.replace(".", "_").replace("@", "")
         for b in ge_env.queues["hpc.q"].bound_hostgroups.values()
     ]
+
     assert {
-        "nodearrays": {"default": {"placement_groups": pgs}}
+        "nodearrays": {"default": {"placement_groups": pgs}},
+        "default_resources": [],
     } == d.preprocess_config({})
 
     # if they did define defaults, make no changes
     custom_config = {
-        "nodearrays": {"default": {"placement_groups": ["hpc_q_mpi_CUSTOM"]}}
+        "nodearrays": {"default": {"placement_groups": ["hpc_q_mpi_CUSTOM"]}},
+        "default_resources": [],
     }
     assert custom_config == d.preprocess_config(custom_config)
+
+    # ensure we handle duplicating shortcut or long form for the user.
+    assert {
+        "nodearrays": {"default": {"placement_groups": pgs}},
+        "default_resources": [
+            {"name": "s", "select": {}, "value": 1},
+            {"name": "slots", "select": {}, "value": 1},
+        ],
+    } == d.preprocess_config(
+        {"default_resources": [{"name": "s", "select": {}, "value": 1}]}
+    )
+
+    assert {
+        "nodearrays": {"default": {"placement_groups": pgs}},
+        "default_resources": [
+            {"name": "slots", "select": {}, "value": 1},
+            {"name": "s", "select": {}, "value": 1},
+        ],
+    } == d.preprocess_config(
+        {"default_resources": [{"name": "slots", "select": {}, "value": 1}]}
+    )
 
 
 def test_hostgroup_constraint() -> None:
