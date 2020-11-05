@@ -120,6 +120,23 @@ def test_preprocess_configs() -> None:
         {"default_resources": [{"name": "slots", "select": {}, "value": 1}]}
     )
 
+    # ensure that ccnodeid is appended to relevant_complexes by default
+    # note: if relevant_complexes is not defined, then every complex is 'relevant'
+    # so no need to add it (and it would in fact break things)
+    assert {
+        "nodearrays": {"default": {"placement_groups": pgs}},
+        "default_resources": [
+            {"name": "slots", "select": {}, "value": 1},
+            {"name": "s", "select": {}, "value": 1},
+        ],
+        "gridengine": {"relevant_complexes": ["slots", "ccnodeid"]},
+    } == d.preprocess_config(
+        {
+            "default_resources": [{"name": "slots", "select": {}, "value": 1}],
+            "gridengine": {"relevant_complexes": ["slots"]},
+        }
+    )
+
 
 def test_hostgroup_constraint() -> None:
     ge_env = common_ge_env()

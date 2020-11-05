@@ -121,7 +121,8 @@ def autoscale_grid_engine(
         timed_out_to_deleted = ge_driver.handle_boot_timeout(timed_out_booting) or []
 
     if unmatched_for_5_mins:
-        logging.info("unmatched_for_5_mins %s", unmatched_for_5_mins)
+        node_expr = ", ".join([str(x) for x in unmatched_for_5_mins])
+        logging.info("Unmatched for at least %s seconds: %s", idle_timeout, node_expr)
         unmatched_nodes_to_delete = (
             ge_driver.handle_draining(unmatched_for_5_mins) or []
         )
@@ -260,9 +261,6 @@ def calculate_demand(
             ctx_handler.set_context("[job {}]".format(job.name))
         demand_calculator.add_job(job)
 
-    for node in demand_calculator.node_mgr.get_nodes():
-        node.available["hostgroups"] = get_node_hostgroups(node)
-
     return demand_calculator
 
 
@@ -274,6 +272,10 @@ def print_demand(
     log: bool = False,
 ) -> None:
     # and let's use the demand printer to print the demand_result.
+    for node in demand_result.matched_nodes + demand_result.unmatched_nodes:
+        node.available["hostgroups"] = get_node_hostgroups(node)
+        node._resources["hostgroups"] = node.available["hostgroups"]
+
     if not output_columns:
         output_columns = config.get(
             "output_columns",
@@ -281,7 +283,7 @@ def print_demand(
                 "name",
                 "hostname",
                 "job_ids",
-                "*hostgroups",
+                "hostgroups",
                 "exists",
                 "required",
                 "managed",

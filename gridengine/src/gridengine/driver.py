@@ -639,6 +639,12 @@ license_oversubscription NONE""".format(
 
         config["default_resources"] = new_default_resources
 
+        if not config.get("gridengine", {}).get("relevant_complexes"):
+            return config
+
+        if "ccnodeid" not in config["gridengine"]["relevant_complexes"]:
+            config["gridengine"]["relevant_complexes"].append("ccnodeid")
+
         return config
 
     def preprocess_buckets(self, node_mgr: NodeManager) -> NodeManager:
@@ -1108,7 +1114,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
         else:
             constraints.append(queue_and_hostgroup_constraints[0])
 
-        jobs = [Job(job_id, constraints, iterations=num_tasks)]
+        jobs = [Job(job_id, constraints[1:], iterations=num_tasks)]
 
     for job in jobs:
         job.metadata["gridengine"] = {
@@ -1408,7 +1414,8 @@ class HostgroupConstraint(BaseNodeConstraint):
         return SatisfiedResult("success", self, node)
 
     def do_decrement(self, node: Node) -> bool:
-        node_hostgroups = set(get_node_hostgroups(node) or [self.hostgroup.name])
+        current_hostgroups = get_node_hostgroups(node)
+        node_hostgroups = set(current_hostgroups or [self.hostgroup.name])
 
         hg_intersect = self.hostgroup.name in node_hostgroups
         if not hg_intersect:
@@ -1432,6 +1439,7 @@ class HostgroupConstraint(BaseNodeConstraint):
 
             node.placement_group = self.placement_group
 
+        if self.hostgroup.name not in current_hostgroups:
             add_node_to_hostgroup(node, self.hostgroup)
 
         # child constraints should not actually decrement anything

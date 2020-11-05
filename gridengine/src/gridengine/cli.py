@@ -45,6 +45,7 @@ def autoscale(
     output_format: Optional[str] = None,
 ) -> None:
     """Runs actual autoscale process"""
+    logging.debug("Begin autoscale")
     ctx_handler = register_result_handler(DefaultContextHandler("[initialization]"))
     if output_columns:
         config["output_columns"] = output_columns
@@ -53,6 +54,7 @@ def autoscale(
         config["output_format"] = output_format
 
     autoscaler.autoscale_grid_engine(config, ctx_handler=ctx_handler)
+    logging.debug("End autoscale")
 
 
 def join_cluster(config: Dict, hostnames: List[str], node_names: List[str]) -> None:
@@ -109,7 +111,7 @@ def delete_nodes(
 
     if do_delete:
         demand_calc.delete(nodes)
-        print("Deleting {}".format(nodes))
+        print("Deleting {}".format([str(n) for n in nodes]))
 
     ge_driver.handle_post_delete(nodes)
     print("Removed from cluster {}".format([str(n) for n in nodes]))
@@ -230,6 +232,7 @@ def demand(
     output_format: Optional[str] = None,
 ) -> None:
     """Runs autoscale in dry run mode to see the demand for new nodes"""
+    logging.debug("Begin demand")
     ctx = DefaultContextHandler("[demand-cli]")
     register_result_handler(ctx)
     ge_env = environment.from_qconf(config)
@@ -239,6 +242,7 @@ def demand(
     demand_result = demand_calc.finish()
 
     autoscaler.print_demand(config, demand_result, output_columns, output_format)
+    logging.debug("End demand")
 
 
 def nodes(
