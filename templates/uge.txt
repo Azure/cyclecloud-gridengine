@@ -40,8 +40,8 @@ Autoscale = $Autoscale
         cyclecloud.exports.defaults.samba.enabled = false      
         cshared.server.legacy_links_disabled = true
 
-        #[[[cluster-init cyclecloud/gridengine:default]]]
-        [[[cluster-init gridengine:default:2.0.1]]]
+        [[[cluster-init cyclecloud/gridengine:default]]]
+        #[[[cluster-init gridengine:default:2.0.0]]]
         Optional = true
 
         [[[configuration cyclecloud.mounts.nfs_shared]]]
@@ -54,6 +54,7 @@ Autoscale = $Autoscale
         [[[configuration cyclecloud.mounts.nfs_sched]]]
         type = nfs
         mountpoint = /sched
+        disabled = $NFSSchedDisable
 
         [[[configuration cyclecloud.mounts.additional_nfs]]]
         disabled = ${AdditionalNAS isnt true}
@@ -73,8 +74,8 @@ Autoscale = $Autoscale
         cyclecloud.mounts.nfs_sched.disabled = true
         cyclecloud.mounts.nfs_shared.disabled = ${NFSType != "External"}
 
-        #[[[cluster-init cyclecloud/gridengine:scheduler]]]
-        [[[cluster-init gridengine:scheduler:2.0.1]]]
+        [[[cluster-init cyclecloud/gridengine:scheduler]]]
+        #[[[cluster-init gridengine:scheduler:2.0.0]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $UsePublicNetwork
@@ -131,8 +132,8 @@ Autoscale = $Autoscale
         gridengine.pes = "mpi mpislots smpslots"
         #gridengine.qname = hpc.q
 
-        #[[[cluster-init cyclecloud/gridengine:execute]]]
-        [[[cluster-init gridengine:execute:2.0.1]]]
+        [[[cluster-init cyclecloud/gridengine:execute]]]
+        #[[[cluster-init gridengine:execute:2.0.0]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $ExecuteNodesPublic
@@ -153,8 +154,8 @@ Autoscale = $Autoscale
         gridengine.pes = "smpslots"
         #gridengine.qname = htc.q
 
-        #[[[cluster-init cyclecloud/gridengine:execute]]]
-        [[[cluster-init gridengine:execute:2.0.1]]]
+        [[[cluster-init cyclecloud/gridengine:execute]]]
+        #[[[cluster-init gridengine:execute:2.0.0]]]
 
         [[[network-interface eth0]]]
         AssociatePublicIpAddress = $ExecuteNodesPublic
@@ -251,14 +252,14 @@ Order = 10
         DefaultValue = Standard_D12_v2
 
         [[[parameter HPCMachineType]]]
-        Label = Execute VM Type
+        Label = HPC VM Type
         Description = The VM type for HPC nodes
         ParameterType = Cloud.MachineType
         DefaultValue = Standard_F4
         Config.Multiselect = true
 
         [[[parameter HTCMachineType]]]
-        Label = Execute VM Type
+        Label = HTC VM Type
         Description = The VM type for HTC nodes
         ParameterType = Cloud.MachineType
         DefaultValue = Standard_F2s_v2
@@ -325,6 +326,22 @@ Order = 10
 
 [parameters Network Attached Storage]
 Order = 15
+
+    [[parameters Scheduler Mount]]
+    Order = 5
+        [[[parameter About sched]]]
+        HideLabel = true
+        Config.Plugin = pico.widget.HtmlTemplateWidget
+        Config.Template = ''' <p>The directory <code>/sched</code> is a network attached mount and exists in all nodes of the cluster. 
+            GridEngine Root directory resides in this share. It's managed by the scheduler node. 
+            To disable the mount of the GridEngine directory, and to supply your own for a <strong>hybrid scenario</strong>, select the checkbox below '''
+        Order = 6
+
+        [[[parameter NFSSchedDisable]]]
+        HideLabel = true
+        DefaultValue = false
+        Widget.Plugin = pico.form.BooleanCheckBox
+        Widget.Label = External Scheduler
 
     [[parameters Default NFS Share]]
     Order = 10
@@ -510,5 +527,5 @@ Order = 20
         Conditions.Hidden := BYOL != true
 
         [[[parameter GERemotePrefix]]]
-        DefaultValue = aHR0cDovL2dlZGVtby51bml2YS5jb20vdWdlLzBiMzQ2NWExODA5ZmI3NjgwYTM2OTg2Y2NkMmE2MDEwL2RlbW8vP3A9JnU9bm8tcmVwbHlAbWljcm9zb2Z0LmNvbSZpZD01OTA3ODQ4MjImZj0=
+        DefaultValue = aHR0cHM6Ly9maWxlcy51bml2YS5jb20vdWdlLzBiMzQ2NWExODA5ZmI3NjgwYTM2OTg2Y2NkMmE2MDEwLzguNi43LWRlbW8vP2lkPTY4NjQwOTk2NSZ1PWJydW5uZXJAdW5pdmEuY29tJmY9
         Conditions.Hidden := true

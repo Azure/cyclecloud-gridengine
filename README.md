@@ -51,6 +51,7 @@ Consider the following queue definition for a queue named _short.q_
 ```ini
 hostlist              @allhosts @mpihg01 @mpihg02 @lowprio 
 ...
+seq_no                10000,[@lowprio=10],[@mpihg01=100],[@mpihg02=200]
 pe_list               NONE,[@mpihg01=mpi01], \
                       [@mpihg02=mpi02]
 ```
@@ -121,10 +122,10 @@ The autoscaling program will only consider *Relevant Resource*
 By default, the cluster with scale based on how many slots are
 requested by the jobs. We can add another dimension to autoscaling. 
 
-Let's say we want to autoscale by the job resource request for `mem_free`.
+Let's say we want to autoscale by the job resource request for `m_mem_free`.
 
-1. Add `mem_free` to the `gridengine.relevant_resources` in _autoscale.json_
-2. Link `mem_free` to the node-level memory resource in _autoscale.json_
+1. Add `m_mem_free` to the `gridengine.relevant_resources` in _autoscale.json_
+2. Link `m_mem_free` to the node-level memory resource in _autoscale.json_
 
 These attributes can be references with `node.*` as the _value_ in _default/_resources_.
 
@@ -191,6 +192,23 @@ The first association is required.
  ],
 ```
 
+Note that if a complex has a shortcut not equal to the entire value, then define both in _default\_resources_
+where `physical_cpu` is the complex name:
+```json
+"default_resources": [
+    {
+      "select": {},
+      "name": "physical_cpu",
+      "value": "node.pcpu_count"
+    },
+    {
+      "select": {},
+      "name": "pcpu",
+      "value": "node.resources.physical_cpu"
+    }
+]
+```
+
 ## Hostgroups
 
 The CycleCloud autoscaler, in attempting to satisfy job requirements, will map nodes to
@@ -202,7 +220,7 @@ For a job submitted as:
 `qsub -q "cloud.q" -l "m_mem_free=4g" -pe "mpi*" 48 ./myjob.sh`
 
 Cyclecloud will find get the intersection of hostgroups which:
-1. Are included in the _pe\_list_ for _cloud.q_ and match the pe name.
+1. Are included in the _pe\_list_ for _cloud.q_ and match the pe name, e.g. `pe_list [@allhosts=mpislots],[@hpc1=mpi]`.
 1. Have adequate resources and subscription quota to provide all job resources.
 1. Are not filtered by the hostgroup constraints configuration.
 
@@ -212,11 +230,8 @@ membership:
 1. Configure the queues so that there aren't ambiguities. 
 1. Add constraints to _autoscale.json_.
 1. Let cyclecloud choose amoungst the matching hostgroups in a name-ordered fashion by adjusting `weight_queue_host_sort < weight_queue_seqno` in the scheduler configuration.
+1. Set `seq_no 10000,[@hostgroup1=100],[@hostgroup2=200]` in the queue configuration to indicate a hostgroup preference.
 
-
-ERROR: Could not find a matching pe for 'mpislots' and queue all.q
-
-pe_list [@allhosts=mpislots]
 
 ### Hostgroup contstraints
 
@@ -233,16 +248,15 @@ constraints. Set a constraint based on the node properties.
         }
       },
       "@amd-mem": {
-        "constraints" : {
-          [ 
-            {"node.vm_size": ["Standard_E32as_v4", "Standard_E64as_v4"]}, 
-            {"node.node_array": "htc" } 
-          ]
-        }
-      }
+        "constraints" : { 
+            "node.vm_size": "Standard_D2_v3",
+            "node.nodearray": "hpc" 
+            }
+        },
     }
   }
   ```
+
 > HINT:
 > Inspect all the available node properties by `azge buckets`.
 
@@ -279,6 +293,23 @@ command to the root crontab. (Souce the gridengine environment variables)
 * * * * * . $SGE_ROOT/common/settings.sh && /usr/local/bin/azge autoscale -c /opt/cycle/gridengine/autoscale.json
 ```
 
+## Creating a hybrid cluster
+
+Cyclecloud will support the scenario of bursting to the cloud. The base configuration assumes that the `$SGE_ROOT`
+directory is available to the cloud nodes. This assumption can be relaxed by setting `gridengine.shared.spool = false`, 
+`gridengine.shared.bin = false` and installing GridEngine locally. 
+For a simple case, you should provide a filesystem that can be mounted by the execute nodes which contains the `$SGE_ROOT` directory
+and configure that mount in the optional settings. When the dependency of the sched and shared directories are released, you 
+can shut down the scheduler node that is part of the cluster by-default and use the configurations 
+from the external filesystem.
+
+1. Create a new gridengine cluster
+1. Disable return proxy
+1. Replace /sched and /shared with external filesystems
+1. Save the cluster
+1. Remove the scheduler node
+1. Configure cyclecloud-gridengine with _autoscale.json_ to use the new cluster
+
 ## Using Univa Grid Engine in CycleCloud
 
 CycleCloud project for GridEngine uses _sge-2011.11_ by default. You may use your own
@@ -307,7 +338,7 @@ binaries to the storage account that CycleCloud uses.
 $ azcopy cp ge-8.6.12-bin-lx-amd64.tar.gz https://<storage-account-name>.blob.core.windows.net/cyclecloud/gridengine/blobs/
 $ azcopy cp ge-8.6.12-common.tar.gz https://<storage-account-name>.blob.core.windows.net/cyclecloud/gridengine/blobs/
 ```
-### Add UGE configs to the cluster template
+### Modifying configs to the cluster template
 
 Make a local copy of the gridengine template and modify it to use the UGE installers
 instead of the default.
@@ -324,10 +355,35 @@ indentation.
 > The details in the configuration, particularly version, should match the installer file name.
 
 ```ini
-[[[configuration]]]
-    gridengine.make = ge
-    gridengine.version = 8.6.12-demo
-    gridengine.root = /sched/ge/ge-8.6.12-demo
+[[[configuration gridengine]]]
+    make = ge
+    version = 8.6.12-demo
+    root = /sched/ge/ge-8.6.12-demo
+    cell = "default"
+    sge_qmaster_port = "537"
+    sge_execd_port = "538"
+    sge_cluster_name = "grid1"
+    gid_range = "20000-20100"
+    qmaster_spool_dir = "/sched/ge/ge-8.6.12-demo/default/spool/qmaster" 
+    execd_spool_dir = "/sched/ge/ge-8.6.12-demo/default/spool"
+    spooling_method = "berkeleydb"
+    shadow_host = ""
+    admin_mail = ""
+    idle_timeout = 300
+
+    managed_fs = true
+    shared.bin = true
+
+    ignore_fqdn = true
+    group.name = "sgeadmin"
+    group.gid = 536
+    user.name = "sgeadmin"
+    user.uid = 536
+    user.gid = 536
+    user.description = "SGE admin user"
+    user.home = "/shared/home/sgeadmin"
+    user.shell = "/bin/bash"
+
 ```
 
 These configs will override the default gridengine version and installation location, as the cluster starts.  
