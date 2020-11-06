@@ -1,3 +1,4 @@
+slots                 0,[<%= @scheduler %>=0]
 suspend_method        <%= @gridengineroot %>/SGESuspend.sh $job_pid $job_id $job_owner
 terminate_method      <%= @gridengineroot %>/SGETerm.sh $job_pid $job_id $job_owner 90
 shell                 /bin/sh

@@ -53,6 +53,7 @@ user node[:gridengine][:user][:name] do
 end
 
 
+hostname = node[:cyclecloud][:instance][:hostname]
 nodename = node[:cyclecloud][:instance][:hostname]
 
 gridengineroot = node[:gridengine][:root]     # /sched/ge/ge-8.2.0-demo
@@ -240,7 +241,7 @@ template "#{gridengineroot}/conf/exec" do
   group "root"
   mode "0755"
   variables(
-    :nodename => nodename,
+    :hostname => hostname,
     :slot_type => slot_type,
     :placement_group => "default"
   )
@@ -252,7 +253,8 @@ template "#{gridengineroot}/conf/gridengine.q" do
   group "root"
   mode "0755"
   variables(
-    :gridengineroot => gridengineroot
+    :gridengineroot => gridengineroot,
+    :scheduler => hostname
   )
 end
 
