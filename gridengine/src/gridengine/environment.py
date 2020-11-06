@@ -116,6 +116,10 @@ class GridEngineEnvironment:
     def host_memberships(self) -> Dict[str, List[str]]:
         return self.__host_memberships
 
+    @property
+    def is_uge(self) -> bool:
+        return self.qbin.is_uge
+
 
 def from_qconf(
     autoscale_config: Dict, qbin: Optional[QBin] = None
@@ -131,7 +135,7 @@ def from_qconf(
 
     unfiltered_complexes = read_complexes({}, qbin)
 
-    queues = read_queues(autoscale_config, pes, hostgroups, complexes, qbin)
+    queues = read_queues(autoscale_config, scheduler, pes, hostgroups, complexes, qbin)
 
     ge_env = GridEngineEnvironment(
         scheduler,

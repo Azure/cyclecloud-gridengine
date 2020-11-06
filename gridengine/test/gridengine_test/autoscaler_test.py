@@ -18,6 +18,7 @@ from gridengine.complex import Complex
 from gridengine.environment import GridEngineEnvironment
 from gridengine.hostgroup import Hostgroup
 from gridengine.parallel_environments import new_parallel_environment as new_pe
+from gridengine.qbin import QBinImpl
 from gridengine.queue import new_gequeue
 from gridengine.scheduler import GridEngineScheduler
 from gridengine_test import mock_driver
@@ -29,9 +30,9 @@ CONTEXT = DefaultContextHandler("[default]")
 
 
 def setup_module() -> None:
+    SchedulerNode.ignore_hostnames = True
     hpclogging.initialize_logging(mock_config(None))
     register_result_handler(CONTEXT)
-    SchedulerNode.ignore_hostnames = True
 
 
 def test_non_exclusive_htc_arrays() -> None:
@@ -233,17 +234,6 @@ def test_fixed() -> None:
     )
 
 
-def test_drill_down() -> None:
-    common_cluster_test(
-        [
-            "-l exclusive=true -l m_mem_free=1g -pe rr* 2  -q hpc.q sleep.sh",
-            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
-        ],
-        pg_counts={"hpc_q_rr0": 5},
-        hpc=5,
-    )
-
-
 # Until quota preprocessing is fixed in tests
 def test_fill_up_and_round_robin() -> None:
     # With FillUp, GE will spread the processes across the machines as tightly as possible.
@@ -260,7 +250,7 @@ def test_fill_up_and_round_robin() -> None:
         ["-pe fu* 20  -q hpc.q sleep.sh"], pg_counts={"hpc_q_fu0": 5}, hpc=5,
     )
     common_cluster_test(
-        ["-pe rr* 5  -q hpc.q sleep.sh"], pg_counts={"hpc_q_rr0": 5}, hpc=5,
+        ["-pe rr* 20  -q hpc.q sleep.sh"], pg_counts={"hpc_q_rr0": 5}, hpc=5,
     )
 
     # same, except split across two jobs
@@ -274,8 +264,8 @@ def test_fill_up_and_round_robin() -> None:
     )
     common_cluster_test(
         [
-            "-l exclusive=true -pe rr* 2  -q hpc.q sleep.sh",
-            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 8  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 12  -q hpc.q sleep.sh",
         ],
         pg_counts={"hpc_q_rr0": 5},
         hpc=5,
@@ -292,8 +282,8 @@ def test_fill_up_and_round_robin() -> None:
     )
     common_cluster_test(
         [
-            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
-            "-l exclusive=true -pe rr* 3  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 12  -q hpc.q sleep.sh",
+            "-l exclusive=true -pe rr* 12  -q hpc.q sleep.sh",
         ],
         pg_counts={"hpc_q_rr0": 3, "hpc_q_rr1": 3},
         hpc=6,
@@ -306,7 +296,7 @@ def test_fill_up_and_round_robin() -> None:
         hpc=9,
     )
     common_cluster_test(
-        ["-l exclusive=true -pe rr* 3 -q hpc.q sleep.sh"] * 4,
+        ["-l exclusive=true -pe rr* 12 -q hpc.q sleep.sh"] * 4,
         pg_counts={"hpc_q_rr2": 3, "hpc_q_rr1": 3, "hpc_q_rr0": 3},
         hpc=9,
     )
@@ -318,7 +308,7 @@ def test_fill_up_and_round_robin() -> None:
         hpc=9,
     )
     common_cluster_test(
-        ["-l exclusive=true -pe rr* 3 -t 1-4 -q hpc.q sleep.sh"],
+        ["-l exclusive=true -pe rr* 12 -t 1-4 -q hpc.q sleep.sh"],
         pg_counts={"hpc_q_rr2": 3, "hpc_q_rr1": 3, "hpc_q_rr0": 3},
         hpc=9,
     )
@@ -450,13 +440,14 @@ def common_cluster(
 
 
 def common_ge_env(
-    previous_dcalc: Optional[DemandCalculator] = None,
+    previous_dcalc: Optional[DemandCalculator] = None, is_uge: bool = True,
 ) -> GridEngineEnvironment:
     scheduler = GridEngineScheduler({})
     existing_nodes = []
     if previous_dcalc:
         existing_nodes = list(previous_dcalc.node_mgr.cluster_bindings.nodes.values())
-    ge_env = GridEngineEnvironment(scheduler, nodes=existing_nodes)
+    qbin = QBinImpl(is_uge=is_uge)
+    ge_env = GridEngineEnvironment(scheduler, qbin=qbin, nodes=existing_nodes)
 
     pe_list = ["NONE"]
 

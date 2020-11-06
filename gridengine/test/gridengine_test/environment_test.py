@@ -1,6 +1,7 @@
 from hpc.autoscale.job.schedulernode import SchedulerNode
 
 from gridengine.environment import GridEngineEnvironment
+from gridengine.qbin import QBinImpl
 from gridengine.scheduler import GridEngineScheduler
 
 
@@ -10,7 +11,8 @@ def setup_module() -> None:
 
 def test_add_remove_nodes() -> None:
     scheduler = GridEngineScheduler({})
-    ge_env = GridEngineEnvironment(scheduler)
+    qbin = QBinImpl(is_uge=True)
+    ge_env = GridEngineEnvironment(scheduler, qbin=qbin)
 
     # should have set like semantics for adding/removing
     ge_env.add_node(SchedulerNode("tux"))

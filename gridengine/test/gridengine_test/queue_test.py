@@ -2,6 +2,7 @@ from gridengine.complex import Complex
 from gridengine.hostgroup import Hostgroup
 from gridengine.parallel_environments import ParallelEnvironment
 from gridengine.queue import GridEngineQueue, parse_slots
+from gridengine.scheduler import GridEngineScheduler
 
 
 def test_parse_slots() -> None:
@@ -46,7 +47,11 @@ def test_hostlist() -> None:
 
     complex_values = {None: {"pcpu": 2}, "@complexvalueshg": {"pcpu": 1}}
 
-    queue = GridEngineQueue(queue_config, pes, unbound_hostgroups, complex_values)
+    scheduler = GridEngineScheduler({})
+
+    queue = GridEngineQueue(
+        queue_config, scheduler, pes, unbound_hostgroups, complex_values
+    )
     assert "@complexvalueshg" in queue.complex_values
     unreferenced = set(unbound_hostgroups.keys()) - set(queue.hostlist)
     assert unreferenced == set(["@notreferenced"])

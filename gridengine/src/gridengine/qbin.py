@@ -2,12 +2,12 @@ import os
 import shlex
 import subprocess
 import sys
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractproperty
 from shutil import which
 from subprocess import STDOUT, CalledProcessError
 from subprocess import check_call as _check_call
 from subprocess import check_output as _check_output
-from typing import Any, List
+from typing import Any, List, Optional
 
 from hpc.autoscale import hpclogging as logging
 
@@ -103,8 +103,23 @@ class QBin(ABC):
     def qstat(self, args: List[str], check: bool = True) -> str:
         ...
 
+    @abstractproperty
+    def is_uge(self) -> bool:
+        ...
+
 
 class QBinImpl(QBin):
+    def __init__(self, is_uge: Optional[bool] = None):
+        if is_uge is not None:
+            self.__is_uge = is_uge
+        elif os.getenv("CYCLECLOUD_GRIDENGINE_FLAVOR", ""):
+            self.__is_uge = (
+                os.getenv("CYCLECLOUD_GRIDENGINE_FLAVOR", "").lower() == "uge"
+            )
+        else:
+            helpmsg = self.qconf(["-help"], check=False)
+            self.__is_uge = helpmsg.startswith("UGE")
+
     def _call(self, bin: str, args: List[str], check: bool = True) -> str:
         try:
             return check_output([bin] + args)
@@ -124,3 +139,7 @@ class QBinImpl(QBin):
 
     def qstat(self, args: List[str], check: bool = True) -> str:
         return self._call(_QSTAT_PATH, args, check)
+
+    @property
+    def is_uge(self) -> bool:
+        return self.__is_uge

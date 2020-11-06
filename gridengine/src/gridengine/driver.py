@@ -66,13 +66,15 @@ class GridEngineDriver:
 
         expected = 'Complex attribute "ccnodeid" does not exist'
         try:
-            self.ge_env.qbin.qconf(["-sce", "ccnodeid"])
-            return
+            if "ccnodeid " in self.ge_env.qbin.qconf(["-sc"]):
+                return
         except CalledProcessError as e:
             if e.stdout and e.stdout.decode().strip() != expected:
                 raise
-
-        contents = """name        ccnodeid
+        ccnodeid_path = None
+        try:
+            if self.ge_env.is_uge:
+                contents = """name        ccnodeid
 shortcut    ccnodeid
 type        RESTRING
 relop       ==
@@ -82,23 +84,40 @@ default     NONE
 urgency     0
 aapre       NO
 affinity    0.000000"""
-        fd, cchost_path = tempfile.mkstemp()
-        try:
-            logging.getLogger("gridengine.driver").info(
-                "cchost complex contents written to %s", cchost_path
-            )
-            logging.getLogger("gridengine.driver").info(contents)
-            with open(fd, "w") as fw:
-                fw.write(contents)
+                fd, ccnodeid_path = tempfile.mkstemp()
 
-            self.ge_env.qbin.qconf(["-Ace", cchost_path])
+                logging.getLogger("gridengine.driver").info(
+                    "ccnodeid complex contents written to %s", ccnodeid_path
+                )
+                logging.getLogger("gridengine.driver").info(contents)
+                with open(fd, "w") as fw:
+                    fw.write(contents)
+                self.ge_env.qbin.qconf(["-Ace", ccnodeid_path])
+            else:
+                current_sc = self.ge_env.qbin.qconf(["-sc"])
+                current_sc = "\n".join(current_sc.strip().splitlines()[:-1])
+                # name shortcut type relop requestable consumable default urgency
+                contents = (
+                    current_sc.strip()
+                    + "\nccnodeid ccnodeid RESTRING == YES NO NONE 0\n"
+                )
+                fd, ccnodeid_path = tempfile.mkstemp()
+
+                logging.getLogger("gridengine.driver").info(
+                    "ccnodeid appended to complex: contents written to %s",
+                    ccnodeid_path,
+                )
+                logging.getLogger("gridengine.driver").info(contents)
+                with open(fd, "w") as fw:
+                    fw.write(contents)
+                self.ge_env.qbin.qconf(["-Mc", ccnodeid_path])
         finally:
-            if os.path.exists(cchost_path):
+            if ccnodeid_path and os.path.exists(ccnodeid_path):
                 try:
-                    os.remove(cchost_path)
+                    os.remove(ccnodeid_path)
                 except Exception:
                     logging.exception(
-                        "Failed to remove temporary file %s.", cchost_path
+                        "Failed to remove temporary file %s.", ccnodeid_path
                     )
 
     def handle_draining(
@@ -468,7 +487,7 @@ affinity    0.000000"""
             complex_values.append("{}={}".format(res_name, res_value))
 
         complex_values_csv = ",".join(complex_values)
-        return """hostname              {hostname}
+        base_template = """hostname              {hostname}
 load_scaling          NONE
 complex_values        {complex_values_csv}
 user_lists            NONE
@@ -476,11 +495,15 @@ xuser_lists           NONE
 projects              NONE
 xprojects             NONE
 usage_scaling         NONE
-report_variables      NONE
-license_constraints   NONE
-license_oversubscription NONE""".format(
+report_variables      NONE""".format(
             hostname=node.hostname, complex_values_csv=complex_values_csv
         )
+        if self.ge_env.is_uge:
+            uge_license_template = """
+license_constraints   NONE
+license_oversubscription NONE"""
+            return base_template + uge_license_template
+        return base_template
 
     def _add_slots(self, node: Node) -> bool:
         queues = []
@@ -1300,23 +1323,7 @@ def _pe_job(
         do_apply_constraints()
         return [Job(job_id, constraints[1:], iterations=num_tasks)]
 
-    elif pe.allocation_rule.name == "$round_robin":
-        # constraints[0] = make_quota_bound_consumable_constraint(
-        #     "slots", 1, ge_queue, ge_env, list(all_hostgroups)
-        # )
-        constraints[0]["slots"] = 1
-        do_apply_constraints()
-
-        def job_constructor(job_id: str) -> Job:
-            return Job(
-                job_id,
-                constraints[1:],
-                node_count=pe_count,
-                colocated=True,
-                packing_strategy="pack",
-            )
-
-    elif pe.allocation_rule.name == "$fill_up":
+    elif pe.allocation_rule.name in ["$round_robin", "$fill_up"]:
         # constraints[0] = make_quota_bound_consumable_constraint(
         #     "slots", 1, ge_queue, ge_env, list(all_hostgroups)
         # )
@@ -1442,11 +1449,13 @@ class HostgroupConstraint(BaseNodeConstraint):
         if self.hostgroup.name not in current_hostgroups:
             add_node_to_hostgroup(node, self.hostgroup)
 
-        # child constraints should not actually decrement anything
+        # hostgroup.constraints should not actually decrement anything
         # they are minimums
         # for child in self.hostgroup.constraints:
         #     assert child.do_decrement(node)
 
+        if self.child_constraint:
+            return self.child_constraint.do_decrement(node)
         return True
 
     def get_children(self) -> List[NodeConstraint]:

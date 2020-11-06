@@ -16,12 +16,14 @@ if typing.TYPE_CHECKING:
     from gridengine.complex import Complex  # noqa: F401
     from gridengine.environment import GridEngineEnvironment
     from gridengine.parallel_environments import ParallelEnvironment  # noqa: F401
+    from gridengine.scheduler import GridEngineScheduler
 
 
 class GridEngineQueue:
     def __init__(
         self,
         queue_config: Dict,
+        scheduler: "GridEngineScheduler",
         pes: Dict[str, "ParallelEnvironment"],
         unbound_hostgroups: Dict[str, Hostgroup],
         complex_values: Dict[str, Dict],
@@ -51,6 +53,15 @@ class GridEngineQueue:
         self.__seq_no = parse_seq_no(self.queue_config.get("seq_no", "0"))
 
         pe_list = parse_hostgroup_mapping(queue_config["pe_list"])
+
+        def _get_seqno(hg_name: str) -> int:
+            return self.__seq_no.get(hg_name, self.__seq_no.get(None, 0))  # type: ignore
+
+        if scheduler.sort_by_seqno:
+            potential_defaults = self.__hostlist + list(self.seq_no.keys())
+            self.default_hg = sorted(potential_defaults, key=_get_seqno)[0]
+        else:
+            self.default_hg = self.__hostlist[0]
 
         for hostgroup, pes_for_hg in pe_list.items():
             for pe_name in pes_for_hg:
@@ -110,7 +121,7 @@ class GridEngineQueue:
         for pe in self.__parallel_environments.values():
             if pe.requires_placement_groups:
                 all_host_groups = all_host_groups - set(
-                    self.get_hostgroups_for_pe(pe.name)
+                    self.__pe_to_hostgroups.get(pe.name) or []
                 )
 
         self.__ht_hostgroups = [x for x in list(all_host_groups) if x.startswith("@")]
@@ -118,7 +129,7 @@ class GridEngineQueue:
         self.__bound_hostgroups: Dict[str, BoundHostgroup] = {}
 
         for hg_name in self.hostlist_groups:
-            hg_seq_no = self.seq_no.get(hg_name, self.seq_no.get(None, 0))  # type: ignore
+            hg_seq_no = _get_seqno(hg_name)
             self.__bound_hostgroups[hg_name] = BoundHostgroup(
                 self, unbound_hostgroups[hg_name], hg_seq_no
             )
@@ -237,8 +248,16 @@ class GridEngineQueue:
                     self.qname, pe_name
                 )
             )
+        ret = self.__pe_to_hostgroups[pe_name]
+        if set(ret) == set([None]):
+            logging.info(
+                "PE %s has no specified hostgroup and will be put into hostgroup %s",
+                pe_name,
+                self.default_hg,
+            )
+            self.__pe_to_hostgroups[pe_name] = ret = [self.default_hg]
 
-        return self.__pe_to_hostgroups[pe_name]
+        return [h for h in ret if h]
 
     def get_placement_group(self, pe_name: str) -> Optional[str]:
         if pe_name not in self.__parallel_environments:
@@ -298,6 +317,7 @@ def _parse_int_map(expr: str) -> Dict[str, int]:
 
 def read_queues(
     autoscale_config: Dict,
+    scheduler: "GridEngineScheduler",
     pes: Dict[str, "ParallelEnvironment"],
     hostgroups: List[Hostgroup],
     complexes: Dict[str, "Complex"],
@@ -321,7 +341,12 @@ def read_queues(
         expr = queue_config.get("complex_values", "NONE")
         complex_values = parse_queue_complex_values(expr, complexes, qname)
         queues[qname] = GridEngineQueue(
-            queue_config, pes, unbound_hostgroups, complex_values, autoscale_enabled
+            queue_config,
+            scheduler,
+            pes,
+            unbound_hostgroups,
+            complex_values,
+            autoscale_enabled,
         )
 
     return queues
@@ -343,4 +368,6 @@ def new_gequeue(
         "slots": slots_expr,
     }
 
-    return GridEngineQueue(queue_config, ge_env.pes, ge_env.hostgroups, complexes)
+    return GridEngineQueue(
+        queue_config, ge_env.scheduler, ge_env.pes, ge_env.hostgroups, complexes
+    )

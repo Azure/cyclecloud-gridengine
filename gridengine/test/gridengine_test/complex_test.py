@@ -171,7 +171,7 @@ virtual_total       vt           MEMORY      <=      YES         NO         0   
 virtual_used        vu           MEMORY      >=      YES         NO         0        0
 # >#< starts a comment but comments are not saved across edits --------
 """
-    qbin = QBinImpl()
+    qbin = QBinImpl(is_uge=True)
     qbin.qconf = mock.MagicMock(return_value=raw_contents)
     complexes = read_complexes({}, qbin)
     assert len(complexes) == 143  # hand calculated

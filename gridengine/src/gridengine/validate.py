@@ -104,9 +104,12 @@ def validate_ht_hostgroup(
             "Queue %s has multiple hostgroups that will map to non-pe jobs.",
             queue.qname,
         )
-        warn(
-            "  Set weight_queue_host_sort < weight_queue_seqno in qconf -msconf to enable"
-        )
+        if ge_env.is_uge:
+            warn(
+                "  Set weight_queue_host_sort < weight_queue_seqno in qconf -msconf to enable"
+            )
+        else:
+            warn("  Set queue_sort_method to seqno in qconf -msconf to enable")
         warn("  sorting by seq_no to deal with this ambiguity.")
         return False
 

@@ -224,17 +224,12 @@ def test_initialize() -> None:
     ge_env.qbin.qconf.assert_called_once()
 
     # ok - make sure we propagate an unknown error
-    ge_env.qbin.qconf = mock.MagicMock(
-        ["-sce", "ccnodeid"],
-        side_effect=CalledProcessError(
-            1, cmd=["-sce", "ccnodeid"], output="Unknown error".encode()
-        ),
-    )
+    ge_env.qbin.qconf = mock.MagicMock(["-sc"], return_value="",)
     ge_driver = GridEngineDriver({"read_only": True}, ge_env)
     ge_driver.initialize_environment()
 
     # now it does exist
-    ge_env.qbin.qconf = mock.MagicMock(return_value="ignored".encode())
+    ge_env.qbin.qconf = mock.MagicMock(return_value="ccnodeid ccnodeid ...")
     ge_driver = GridEngineDriver({}, ge_env)
     ge_driver.initialize_environment()
     ge_env.qbin.qconf.assert_called_once()
@@ -249,13 +244,9 @@ def test_initialize() -> None:
 
         def __call__(self, args):  # type: ignore
             self.call_count += 1
-            if args == ["-sce", "ccnodeid"]:
+            if args == ["-sc"]:
                 assert self.call_count == 1
-                raise CalledProcessError(
-                    1,
-                    cmd=["-sce", "ccnodeid"],
-                    output='Complex attribute "ccnodeid" does not exist'.encode(),
-                )
+                return ""
             elif args[0] == "-Ace":
                 assert self.call_count == 2
                 return ""
