@@ -273,7 +273,10 @@ def print_demand(
 ) -> None:
     # and let's use the demand printer to print the demand_result.
     for node in demand_result.matched_nodes + demand_result.unmatched_nodes:
-        node.available["hostgroups"] = get_node_hostgroups(node)
+        # ignore @allhosts - every node will eventually end up there.
+        node.available["hostgroups"] = [
+            x for x in get_node_hostgroups(node) if x != "@allhosts"
+        ]
         node._resources["hostgroups"] = node.available["hostgroups"]
 
     if not output_columns:

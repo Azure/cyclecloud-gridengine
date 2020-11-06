@@ -372,7 +372,7 @@ def initconfig(writer: TextIO = sys.stdout, **config: Dict) -> None:
     #   :lock_file => "#{node[:cyclecloud][:bootstrap]}/scalelib.lock",
     #   :logging => {:config_file => "#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf"},
     #   :default_resources => [ { :select => {}, :name => "slots", :value => "node.vcpu_count"} ],
-    #   :gridengine => {:queues => { },
+    #   :gridengine => {:hostgroups
     #                   :relevant_complexes =>relevant_complexes,
     #                   :idle_timeout => node[:gridengine][:idle_timeout]}
     # }
@@ -383,6 +383,19 @@ def initconfig(writer: TextIO = sys.stdout, **config: Dict) -> None:
         config["gridengine"]["pes"] = pes = config["gridengine"].get("pes") or {}
         pes[pe_name] = pe_config = pes.get(pe_name) or {}
         pe_config["requires_placement_groups"] = False
+
+    for expr in config.pop("hostgroup_constraints", []):
+        hg_name, constraint_expr = expr.split("=", 1)
+        hg_name = hg_name.strip()
+        constraint_expr = constraint_expr.strip()
+        _parse_contraint(constraint_expr)
+        constraint_json = json.loads(constraint_expr)
+
+        if "hostgroups" not in config["gridengine"]:
+            config["gridengine"]["hostgroups"] = {}
+        if hg_name not in config["gridengine"]["hostgroups"]:
+            config["gridengine"]["hostgroups"][hg_name] = {}
+        config["gridengine"]["hostgroups"][hg_name]["constraints"] = constraint_json
 
     for key in list(config.keys()):
 
@@ -720,6 +733,12 @@ def main(argv: Iterable[str] = None) -> None:
         help="Disable creation of placement groups for a parallel environment. "
         + "This can be invoked more than once.",
         dest="disable_pgs_for_pe",
+    )
+    initconfig_parser.add_argument(
+        "--hostgroup-constraint",
+        default=[],
+        action="append",
+        dest="hostgroup_constraints",
     )
 
     add_parser("jobs", jobs)

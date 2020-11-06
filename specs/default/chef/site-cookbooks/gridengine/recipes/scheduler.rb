@@ -320,18 +320,13 @@ elsif node[:gridengine][:make]=='sge'
   end
 end
 
-cookbook_file "#{gridengineroot}/conf/pecfg" do
-  source "conf/pecfg"
-  owner "root"
-  group "root"
-  mode "0755"
-  action :create
-end
-
 pe_list = [ "make", "mpi", "mpislots", "smpslots"]
 
 file "#{gridengineroot}/conf/pecfg" do
-  content "pe_list #{pe_list.join(' ')}"
+  content <<-EOF
+pe_list [@cyclehtc=make,smpslots],[@cyclempi=mpi,mpislots]
+hostlist @cyclehtc,@cyclempi
+EOF
   mode "0755"
 end
 
@@ -351,6 +346,32 @@ pe_list.each do |confFile|
     command ". /etc/cluster-setup.sh && qconf -Ap #{File.join(gridengineroot, 'conf', confFile)}"
     not_if ". /etc/cluster-setup.sh && qconf -spl | grep #{confFile}"
   end
+end
+
+bash "add @cyclempi hostgroup" do
+  code <<-EOH
+  . /etc/cluster-setup.sh
+  set -e
+  cat > $SGE_ROOT/conf/cyclempi <<EOF
+group_name @cyclempi
+hostlist #{hostname}
+EOF
+  qconf -Ahgrp $SGE_ROOT/conf/cyclempi
+EOH
+  not_if ". /etc/cluster-setup.sh && qconf -shgrpl | egrep -q '^@cyclempi$'"
+end
+
+bash "add @cyclehtc hostgroup" do
+code <<-EOH
+  set -e
+  . /etc/cluster-setup.sh
+  cat > $SGE_ROOT/conf/cyclehtc <<EOF
+group_name @cyclehtc
+hostlist #{hostname}
+EOF
+  qconf -Ahgrp $SGE_ROOT/conf/cyclehtc
+EOH
+  not_if ". /etc/cluster-setup.sh && qconf -shgrpl | egrep -q '^@cyclehtc$'"
 end
 
 # Don't set the parallel environments for the all.q once we've already run this.
@@ -455,6 +476,8 @@ bash 'setup cyclecloud-gridengine' do
                   --default-resource '{"select": {}, "name": "mfree", "value": "node.resources.m_mem_free"}' \
                   --default-resource '{"select": {}, "name": "exclusive", "value": "true"}' \
                   --disable-pgs-for-pe make \
+                  --hostgroup-constraint @cyclempi='{"node.colocated": true}' \
+                  --hostgroup-constraint @cyclehtc='{"node.colocated": false}' \
                   --idle-timeout #{node[:gridengine][:idle_timeout]} \
                   --relevant-complexes #{relevant_complexes_str} > $INSTALLDIR/autoscale.json
 

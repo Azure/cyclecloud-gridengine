@@ -129,8 +129,6 @@ Autoscale = $Autoscale
         [[[configuration]]]
         gridengine.autoscale = $Autoscale
         gridengine.colocated = true
-        gridengine.pes = "mpi mpislots smpslots"
-        #gridengine.qname = hpc.q
 
         [[[cluster-init cyclecloud/gridengine:execute]]]
         #[[[cluster-init gridengine:execute:2.0.0]]]
@@ -151,8 +149,6 @@ Autoscale = $Autoscale
 
         [[[configuration]]]
         gridengine.autoscale = $Autoscale
-        gridengine.pes = "smpslots"
-        #gridengine.qname = htc.q
 
         [[[cluster-init cyclecloud/gridengine:execute]]]
         #[[[cluster-init gridengine:execute:2.0.0]]]

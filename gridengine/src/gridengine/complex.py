@@ -132,6 +132,11 @@ def _parse_complexes(
             "relevant_complexes"
         )
         if relevant_complexes:
+            # special handling of ccnodeid, since it is something we
+            # create for the user
+            relevant_complexes = relevant_complexes + ["ccnodeid"]
+
+        if relevant_complexes:
             logging.info(
                 "Restricting complexes for autoscaling to %s", relevant_complexes
             )
