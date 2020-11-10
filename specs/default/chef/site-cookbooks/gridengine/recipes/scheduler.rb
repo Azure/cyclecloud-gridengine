@@ -256,7 +256,7 @@ template "#{gridengineroot}/conf/gridengine.q" do
   )
 end
 
-remote_directory '#{gridengineroot}/hooks' do
+remote_directory "#{gridengineroot}/hooks" do
   source 'hooks'
   owner 'root'
   group 'root'

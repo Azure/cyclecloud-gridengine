@@ -221,8 +221,9 @@ Order = 1
         Config.Template = '''
         <span style="font-weight: 600; font-style: italic;">Please agree to the terms to continue</span>
         '''
-        Conditions.Hidden := AcceptTerms is true
-        Conditions.Value := AcceptTerms ? true : undefined
+        
+        Conditions.Hidden := AcceptTerms is true || BYOL is true
+        Conditions.Value := (AcceptTerms || BYOL ) ? true : undefined
         Required = true
         
         [[[parameter AcceptTerms]]]
