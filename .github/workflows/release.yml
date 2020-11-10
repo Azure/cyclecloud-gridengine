@@ -24,6 +24,11 @@ jobs:
       - name: Get the version
         id: get_version
         run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/}
+      - name: Get SGE binaries
+        id: get-sge-binaries
+        run:
+          curl -L -k -o dist/sge-2011.11-64.tgz https://github.com/Azure/cyclecloud-gridengine/releases/download/1.0.0/sge-2011.11-64.tgz;
+          curl -L -k -o dist/sge-2011.11-common.tgz https://github.com/Azure/cyclecloud-gridengine/releases/download/1.0.0/sge-2011.11-common.tgz;
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
@@ -43,4 +48,24 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: dist/cyclecloud-gridengine-pkg-${{ steps.get_version.outputs.version }}.tar.gz
           asset_name: cyclecloud-gridengine-pkg-${{ steps.get_version.outputs.version }}.tar.gz
+          asset_content_type: application/gzip
+      - name: Upload SGE Binary
+        id: upload-sge-binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dist/sge-2011.11-64.tgz
+          asset_name: sge-2011.11-64.tgz
+          asset_content_type: application/gzip
+      - name: Upload SGE Common
+        id: upload-sge-common
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dist/sge-2011.11-common.tgz
+          asset_name: sge-2011.11-common.tgz
           asset_content_type: application/gzip
