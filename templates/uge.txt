@@ -3,7 +3,7 @@
 ## Cluster Configuration File ##
 ################################
 
-[cluster Grid Engine]
+[cluster Univa Grid Engine]
 FormLayout = selectionpanel
 Category = Schedulers
 IconUrl = /static/cloud/cluster/ui/ClusterIcon/univa-large.png
