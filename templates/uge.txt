@@ -176,7 +176,7 @@ Order = 1
                                          optimize throughput and performance, share resources more effectively, and improve ROI for a wide 
                                          variety of applications.</p> </td></tr> 
                                          <tr> <td> <p>&nbsp;</p> </td></tr> 
-                                         <tr><td><big><b>Let’s get started  </big> </b></td></tr>   
+                                         <tr><td><big><b>Let's get started  </big> </b></td></tr>   
                                          <tr><td> <p> <a href="http://www.univa.com/about/contact/index-ms.php" > Contact us to get started.</a> 
                                             We can discuss your applications, answer any Grid Engine questions, and explain commercial licensing 
                                             options fon-premise and Azure CycleCloud resident clusters. </p></td></tr> 
