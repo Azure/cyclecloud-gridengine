@@ -113,10 +113,13 @@ def execute() -> None:
         with open(path, "rb") as fr:
             tf.addfile(tarinfo, fr)
 
+    packages = []
     for dep in cycle_libs:
         dep_path = os.path.abspath(os.path.join("libs", dep))
         _add("packages/" + dep, dep_path)
-        check_call(["pip", "download", dep_path], cwd=build_dir)
+        packages.append(dep_path)
+
+    check_call(["pip", "download"] + packages, cwd=build_dir)
 
     print("Using build dir", build_dir)
     for fil in os.listdir(build_dir):
