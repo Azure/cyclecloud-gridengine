@@ -348,8 +348,9 @@ affinity    0.000000"""
         if not hostgroups:
             logging.warning(
                 "No hostgroups were found for %s. Adding to @allhosts only. Please manually add "
-                + "this node to a hostgroup. If this was a manually started node, add "
-                + "'gridengine.hostgroups = @preferred-hostgroup' to the nodearray's configuration section.",
+                + "this node to a hostgroup using qconf. If this was a manually started node, add "
+                + "'gridengine.hostgroups = @preferred-hostgroup' to the nodearray's configuration "
+                + "section so that future nodes will automatically be added.",
                 node,
             )
             add_node_to_hostgroup(node, self.ge_env.hostgroups["@allhosts"])
