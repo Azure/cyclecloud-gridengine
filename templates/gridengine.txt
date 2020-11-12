@@ -370,18 +370,21 @@ Order = 20
         [[[parameter SchedulerImageName]]]
         Label = Scheduler Base OS
         ParameterType = Cloud.Image
+        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8"}
         Config.OS = linux
         DefaultValue = cycle.image.centos7
 
         [[[parameter HPCImageName]]]
         Label = HPC Base OS
         ParameterType = Cloud.Image
+        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8"}
         Config.OS = linux
         DefaultValue = cycle.image.centos7
 
         [[[parameter HTCImageName]]]
         Label = HTC Base OS
         ParameterType = Cloud.Image
+        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8"}
         Config.OS = linux
         DefaultValue = cycle.image.centos7
 
