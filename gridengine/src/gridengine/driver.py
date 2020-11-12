@@ -346,10 +346,13 @@ affinity    0.000000"""
 
         hostgroups = get_node_hostgroups(node)
         if not hostgroups:
-            logging.fine(
-                "No hostgroups were found for %s. Can not add to cluster.", node
+            logging.warning(
+                "No hostgroups were found for %s. Adding to @allhosts only. Please manually add "
+                + "this node to a hostgroup. If this was a manually started node, add "
+                + "'gridengine.hostgroups = @preferred-hostgroup' to the nodearray's configuration section.",
+                node,
             )
-            return False
+            add_node_to_hostgroup(node, self.ge_env.hostgroups["@allhosts"])
 
         if not self._validate_reverse_dns(node):
             logging.fine(
