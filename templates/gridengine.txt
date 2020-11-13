@@ -156,7 +156,7 @@ Order = 1
         [[[parameter gridengine]]]
         HideLabel = true
         Config.Plugin = pico.widget.HtmlTemplateWidget
-        Config.Template := "<table><tr><td><p>Grid Engine is a highly configurable open source workload manager. See the <a href=\"http://gridscheduler.sourceforge.net/\" target=\"_blank\">Grid Scheduler project site</a> for an overview.</p></td></tr></table>"
+        Config.Template := "<table role=\"presentation\"><tr><td><p>Grid Engine is a highly configurable open source workload manager. See the <a href=\"http://gridscheduler.sourceforge.net/\" target=\"_blank\">Grid Scheduler project site</a> for an overview.</p></td></tr></table>"
 
 [parameters Required Settings]
 Order = 10
