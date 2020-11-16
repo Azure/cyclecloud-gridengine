@@ -22,7 +22,7 @@ from hpc.autoscale.results import (
     MatchResult,
     register_result_handler,
 )
-from hpc.autoscale.util import json_load, partition_single
+from hpc.autoscale.util import load_config, partition_single
 
 from gridengine import autoscaler, environment, util, validate
 from gridengine.driver import GridEngineDriver, HostgroupConstraint
@@ -621,24 +621,12 @@ def main(argv: Iterable[str] = None) -> None:
         if skip_config:
             return new_parser
 
-        def parse_config(c: str) -> Dict:
-            try:
-                if not c:
-                    raise RuntimeError("Did not specify config -c/--config")
-                config = json_load(c)
-                # make sure we initialize logging ASAP
-                logging.initialize_logging(config)
-                return config
-            except Exception as e:
-                print(str(e), file=sys.stderr)
-                sys.exit(1)
-
         new_parser.add_argument(
             "--config",
             "-c",
             default=default_config,
             required=not bool(default_config),
-            type=parse_config,  # type: ignore
+            action="append",
         )
         return new_parser
 
@@ -771,6 +759,11 @@ def main(argv: Iterable[str] = None) -> None:
     if args.read_only:
         args.config["read_only"] = True
         args.config["lock_file"] = None
+
+    # parse list of config paths to a single config
+    if hasattr(args, "config"):
+        args.config = load_config(*args.config)
+        logging.initialize_logging(args.config)
 
     kwargs = {}
     for k in dir(args):

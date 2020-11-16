@@ -1,7 +1,6 @@
 import os
 import sys
 import typing
-from argparse import ArgumentParser
 from typing import Any, Dict, List, Optional, Set
 
 from hpc.autoscale import hpclogging as logging
@@ -10,8 +9,8 @@ from hpc.autoscale.job import demandprinter
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
-from hpc.autoscale.results import DefaultContextHandler, register_result_handler
-from hpc.autoscale.util import SingletonLock, json_load
+from hpc.autoscale.results import DefaultContextHandler
+from hpc.autoscale.util import SingletonLock
 
 from gridengine import environment as envlib
 from gridengine.environment import GridEngineEnvironment
@@ -360,28 +359,3 @@ class BadDriverError(RuntimeError):
 
     def __repr__(self) -> str:
         return str(self)
-
-
-def main() -> int:
-    ctx_handler = register_result_handler(DefaultContextHandler("[initialization]"))
-
-    parser = ArgumentParser()
-    parser.add_argument(
-        "-c", "--config", help="Path to autoscale config.", required=True
-    )
-    args = parser.parse_args()
-    config_path = os.path.expanduser(args.config)
-
-    if not os.path.exists(config_path):
-        print("{} does not exist.".format(config_path), file=sys.stderr)
-        return 1
-
-    config = json_load(config_path)
-
-    autoscale_grid_engine(config, ctx_handler=ctx_handler)
-
-    return _exit_code
-
-
-if __name__ == "__main__":
-    sys.exit(main())
