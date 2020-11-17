@@ -756,14 +756,14 @@ def main(argv: Iterable[str] = None) -> None:
         parser.print_help()
         sys.exit(1)
 
-    if args.read_only:
-        args.config["read_only"] = True
-        args.config["lock_file"] = None
-
     # parse list of config paths to a single config
     if hasattr(args, "config"):
         args.config = load_config(*args.config)
         logging.initialize_logging(args.config)
+
+    if args.read_only:
+        args.config["read_only"] = True
+        args.config["lock_file"] = None
 
     kwargs = {}
     for k in dir(args):
