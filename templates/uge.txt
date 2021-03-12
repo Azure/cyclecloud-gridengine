@@ -165,7 +165,7 @@ Order = 1
         [[[parameter gridengine]]]
         HideLabel = true
         Config.Plugin = pico.widget.HtmlTemplateWidget
-        Config.Template = '''<table role="presentation"> <tr><td> <a> <img width="256" alt="Univa logo" src="/static/cloud/cluster/ui/ClusterIcon/univa-large.png"> </a>  </td></tr> 
+        Config.Template = '''<table role="presentation"> <tr><td> <a> <img width="256" alt="Univa logo" src="static/cloud/cluster/ui/ClusterIcon/univa-large.png"> </a>  </td></tr> 
                                 <tr><td><big><b>Thank you for trying Univa Grid Engine! </big> </b></td></tr> 
                                 <tr><td><p>Univa Grid Engine is the leading implementation of the popular Grid Engine workload scheduling and
                                          management system used by thousands customers around the world. Univa Grid Engine helps organizations 
