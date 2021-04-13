@@ -118,12 +118,21 @@ link "/etc/cluster-setup.csh" do
   to "#{gridengineroot}/#{gridenginecell}/common/settings.csh"
 end
 
+
+sgemaster_path="#{gridengineroot}/#{gridenginecell}/common/sgemaster"
+
+execute "fix sgemasterd service shebang" do
+  command "(head -n 1 #{sgemaster_path} | grep -q '#!/bin/') || (cp #{sgemaster_path} #{sgemaster_path}.bkp && echo '#!/bin/sh' > #{sgemaster_path} && cat #{sgemaster_path}.bkp >> #{sgemaster_path} && rm -f #{sgemaster_path}.bkp)"
+  action :run
+end
+
 execute "set qmaster hostname" do
   if node[:platform_family] == "rhel" && node[:platform_version] < "7" then
     command "echo #{node[:hostname]} > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
   else
     command "hostname -f > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
-  end 
+  end
+  notifies :run, 'execute[fix sgemasterd service shebang]', :immediately
 end
 
 case node[:platform_family]
@@ -207,6 +216,15 @@ service sge_execd_service do
   action [:enable]
 end
 
+execute "stop non-daemon qmaster" do
+  command "#{gridengineroot}/#{gridenginecell}/common/sgemaster stop"
+  only_if "ps aux | grep sge_qmaster | grep -v grep | grep -q qmaster"
+end
+
+service sge_qmasterd_service do
+  action [:enable, :start]
+end
+
 execute "setglobal" do
   command ". /etc/cluster-setup.sh && qconf -Mconf #{gridengineroot}/conf/global && touch #{chefstate}/gridengine.global.set"
   creates "#{chefstate}/gridengine.global.set"
@@ -229,10 +247,6 @@ execute "schedexecinst" do
   command "cd #{gridengineroot} && ./inst_sge -x -noremote -auto #{gridengineroot}/conf/#{nodename}.conf && touch #{chefstate}/gridengine.sgesched.schedexecinst"
   creates "#{chefstate}/gridengine.sgesched.schedexecinst"
   action :run
-end
-
-service sge_qmasterd_service do
-  action [:enable]
 end
 
 template "#{gridengineroot}/conf/exec" do
@@ -285,6 +299,7 @@ end
 
 
 if node[:gridengine][:make]=='ge'
+
   # UGE can change complexes between releases
   %w( slot_type onsched placement_group exclusive nodearray ).each do |confFile|
     cookbook_file "#{gridengineroot}/conf/complex_#{confFile}" do
@@ -302,6 +317,7 @@ if node[:gridengine][:make]=='ge'
     end
   end
 elsif node[:gridengine][:make]=='sge'
+
   # OGS does't have qconf -Ace options 
   complex_file = "conf/complexes"
 
