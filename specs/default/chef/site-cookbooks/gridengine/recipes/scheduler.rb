@@ -118,6 +118,15 @@ link "/etc/cluster-setup.csh" do
   to "#{gridengineroot}/#{gridenginecell}/common/settings.csh"
 end
 
+
+sgemaster_path="#{gridengineroot}/default/common/sgemaster"
+
+execute "fix sgemasterd service shebang" do
+  command "cp #{sgemaster_path} #{sgemaster_path}.bkp && echo '#!/bin/sh' > #{sgemaster_path} && cat #{sgemaster_path}.bkp >> #{sgemaster_path} && rm -f #{sgemaster_path}.bkp"
+  action :run
+  only_if "head -n 1 #{gridengineroot} | grep -q '#!/bin/'"
+end
+
 execute "set qmaster hostname" do
   if node[:platform_family] == "rhel" && node[:platform_version] < "7" then
     command "echo #{node[:hostname]} > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
@@ -207,6 +216,10 @@ service sge_execd_service do
   action [:enable]
 end
 
+service sge_qmasterd_service do
+  action [:enable, :start]
+end
+
 execute "setglobal" do
   command ". /etc/cluster-setup.sh && qconf -Mconf #{gridengineroot}/conf/global && touch #{chefstate}/gridengine.global.set"
   creates "#{chefstate}/gridengine.global.set"
@@ -229,10 +242,6 @@ execute "schedexecinst" do
   command "cd #{gridengineroot} && ./inst_sge -x -noremote -auto #{gridengineroot}/conf/#{nodename}.conf && touch #{chefstate}/gridengine.sgesched.schedexecinst"
   creates "#{chefstate}/gridengine.sgesched.schedexecinst"
   action :run
-end
-
-service sge_qmasterd_service do
-  action [:enable]
 end
 
 template "#{gridengineroot}/conf/exec" do
@@ -285,6 +294,7 @@ end
 
 
 if node[:gridengine][:make]=='ge'
+
   # UGE can change complexes between releases
   %w( slot_type onsched placement_group exclusive nodearray ).each do |confFile|
     cookbook_file "#{gridengineroot}/conf/complex_#{confFile}" do
@@ -302,6 +312,7 @@ if node[:gridengine][:make]=='ge'
     end
   end
 elsif node[:gridengine][:make]=='sge'
+
   # OGS does't have qconf -Ace options 
   complex_file = "conf/complexes"
 
