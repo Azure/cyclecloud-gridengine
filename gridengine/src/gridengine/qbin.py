@@ -107,6 +107,10 @@ class QBin(ABC):
     def is_uge(self) -> bool:
         ...
 
+    @abstractproperty
+    def version(self) -> str:
+        ...
+
 
 class QBinImpl(QBin):
     def __init__(self, is_uge: Optional[bool] = None):
@@ -116,9 +120,12 @@ class QBinImpl(QBin):
             self.__is_uge = (
                 os.getenv("CYCLECLOUD_GRIDENGINE_FLAVOR", "").lower() == "uge"
             )
+            self.__version = os.getenv("CYCLECLOUD_GRIDENGINE_FLAVOR", "8.6.2")
         else:
             helpmsg = self.qconf(["-help"], check=False)
-            self.__is_uge = helpmsg.startswith("UGE")
+            first_line = helpmsg.splitlines()[0]
+            self.__is_uge = first_line.startswith("UGE")
+            _, self.__version = first_line.split(None, 1)
 
     def _call(self, bin: str, args: List[str], check: bool = True) -> str:
         try:
@@ -143,3 +150,7 @@ class QBinImpl(QBin):
     @property
     def is_uge(self) -> bool:
         return self.__is_uge
+
+    @property
+    def version(self) -> str:
+        return self.__version

@@ -95,8 +95,12 @@ chmod +x $VENV/bin/azge
 azge -h 2>&1 > /dev/null || exit 1
 
 ln -sf $VENV/bin/azge /usr/local/bin/
+if [ ! -e /root/bin ]; then
+  mkdir /root/bin
+fi
+ln -sf $VENV/bin/azge /root/bin/
 
-echo 'azge' installed. A symbolic link was made to /usr/local/bin/azge
+echo 'azge' installed. A symbolic link was made to /usr/local/bin/azge and /root/bin
 crontab -l > /tmp/current_crontab
 grep -q 'Created by cyclecloud-gridengine install.sh' /tmp/current_crontab
 if [ $? != 0 ]; then

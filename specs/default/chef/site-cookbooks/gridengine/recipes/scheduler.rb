@@ -299,21 +299,43 @@ end
 
 
 if node[:gridengine][:make]=='ge'
+# UGE can change complexes between releases
+  if node[:gridengine][:version] >= "8.5"
+  
+    %w( slot_type onsched placement_group exclusive nodearray ).each do |confFile|
+      cookbook_file "#{gridengineroot}/conf/complex_#{confFile}" do
+        source "conf/complex_#{confFile}"
+        owner "root"
+        group "root"
+        mode "0755"
+        only_if "test -d #{gridengineroot}/conf"
+      end
 
-  # UGE can change complexes between releases
-  %w( slot_type onsched placement_group exclusive nodearray ).each do |confFile|
-    cookbook_file "#{gridengineroot}/conf/complex_#{confFile}" do
-      source "conf/complex_#{confFile}"
-      owner "root"
-      group "root"
-      mode "0755"
-      only_if "test -d #{gridengineroot}/conf"
+      execute "set #{confFile} complex" do
+        command ". /etc/cluster-setup.sh && qconf -Ace #{gridengineroot}/conf/complex_#{confFile} && touch #{chefstate}/gridengine.setcomplex.#{confFile}.done"
+        creates "#{chefstate}/gridengine.setcomplex.#{confFile}.done"
+        action :run
+      end
     end
-
-    execute "set #{confFile} complex" do
-      command ". /etc/cluster-setup.sh && qconf -Ace #{gridengineroot}/conf/complex_#{confFile} && touch #{chefstate}/gridengine.setcomplex.#{confFile}.done"
-      creates "#{chefstate}/gridengine.setcomplex.#{confFile}.done"
-      action :run
+  else
+    bash "install complexes" do
+      code <<-EOH
+      . /etc/cluster-setup.sh 
+      qconf -sc 2>&1| grep -vE '^slot_type|^onsched|^placement_group|^exclusive|^nodearray' > #{gridengineroot}/conf/complexes_install || exit 1;
+      cat >> #{gridengineroot}/conf/complexes_install <<EOF
+nodearray               nodearray     RESTRING    ==      YES         NO         NONE     0       NO
+slot_type               slot_type     RESTRING    ==      YES         NO         NONE     0       NO
+exclusive               exclusive     BOOL        EXCL    YES         YES        0        1000    NO
+placement_group         group         RESTRING    ==      YES         NO         NONE     0       NO
+onsched                 os            BOOL        ==      YES         NO         0        0       NO
+EOF
+      qconf -Mc #{gridengineroot}/conf/complexes_install || test 1
+      qconf -sc | grep -q slot_type || exit 1
+      qconf -sc | grep -q onsched || exit 1
+      qconf -sc | grep -q placement_group || exit 1
+      qconf -sc | grep -q exclusive || exit 1
+      qconf -sc | grep -q nodearray || exit 1
+      EOH
     end
   end
 elsif node[:gridengine][:make]=='sge'
@@ -464,6 +486,7 @@ end
 bash 'setup cyclecloud-gridengine' do
   code <<-EOH
   set -e
+  set -x
   . /etc/cluster-setup.sh
   cd #{node[:cyclecloud][:bootstrap]}/
 

@@ -73,7 +73,7 @@ class GridEngineDriver:
                 raise
         ccnodeid_path = None
         try:
-            if self.ge_env.is_uge:
+            if self.ge_env.is_uge and self.ge_env.version >= "8.5":
                 contents = """name        ccnodeid
 shortcut    ccnodeid
 type        RESTRING
@@ -97,10 +97,16 @@ affinity    0.000000"""
                 current_sc = self.ge_env.qbin.qconf(["-sc"])
                 current_sc = "\n".join(current_sc.strip().splitlines()[:-1])
                 # name shortcut type relop requestable consumable default urgency
-                contents = (
-                    current_sc.strip()
-                    + "\nccnodeid ccnodeid RESTRING == YES NO NONE 0\n"
-                )
+                if self.ge_env.is_uge:
+                    contents = (
+                        current_sc.strip()
+                        + "\nccnodeid ccnodeid RESTRING == YES NO NONE 0 NO\n"
+                    )
+                else:
+                    contents = (
+                        current_sc.strip()
+                        + "\nccnodeid ccnodeid RESTRING == YES NO NONE 0\n"
+                    )
                 fd, ccnodeid_path = tempfile.mkstemp()
 
                 logging.getLogger("gridengine.driver").info(

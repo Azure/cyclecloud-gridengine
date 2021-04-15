@@ -120,6 +120,10 @@ class GridEngineEnvironment:
     def is_uge(self) -> bool:
         return self.qbin.is_uge
 
+    @property
+    def version(self) -> str:
+        return self.qbin.version
+
 
 def from_qconf(
     autoscale_config: Dict, qbin: Optional[QBin] = None

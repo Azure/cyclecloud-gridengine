@@ -22,7 +22,7 @@ from hpc.autoscale.results import (
     MatchResult,
     register_result_handler,
 )
-from hpc.autoscale.util import load_config, partition_single
+from hpc.autoscale.util import partition_single
 
 from gridengine import autoscaler, environment, util, validate
 from gridengine.driver import GridEngineDriver, HostgroupConstraint
@@ -625,8 +625,7 @@ def main(argv: Iterable[str] = None) -> None:
             "--config",
             "-c",
             default=default_config,
-            required=not bool(default_config),
-            action="append",
+            required=not bool(default_config)
         )
         return new_parser
 
@@ -758,7 +757,12 @@ def main(argv: Iterable[str] = None) -> None:
 
     # parse list of config paths to a single config
     if hasattr(args, "config"):
-        args.config = load_config(*args.config)
+        try:
+            with open(args.config) as fr:
+                args.config = json.load(fr)
+        except Exception as e:
+            logging.error("Could not load config file %s: %s", args.config, e)
+            sys.exit(1)
         logging.initialize_logging(args.config)
 
     if args.read_only:
