@@ -132,7 +132,7 @@ ruby_block "gridengine exec authorized?" do
   end
   retries 5
   retry_delay 30
-  #notifies :start, 'service[sgeexecd]', :immediately
+  notifies :start, "service[#{sge_execd_service}]", :delayed
 end
 
 # this starts the sge_execd process as well - also requires host to be authorized 
@@ -140,8 +140,10 @@ execute "install_gridengine_execd" do
   cwd gridengineroot
   command "./inst_sge -x -noremote -auto #{Chef::Config['file_cache_path']}/compnode.conf && touch /etc/gridengineexecd.installed"
   creates "/etc/gridengineexecd.installed"
+  notifies :stop, "service[#{sge_execd_service}]", :immediately
   notifies :enable, "service[#{sge_execd_service}]", :immediately
 end
+
 
 # Is this pidfile_running check actually working? I see the file, but I don't see the debug logs
 service sge_execd_service do
