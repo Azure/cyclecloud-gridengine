@@ -622,10 +622,7 @@ def main(argv: Iterable[str] = None) -> None:
             return new_parser
 
         new_parser.add_argument(
-            "--config",
-            "-c",
-            default=default_config,
-            required=not bool(default_config)
+            "--config", "-c", default=default_config, required=not bool(default_config)
         )
         return new_parser
 
