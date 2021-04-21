@@ -437,8 +437,16 @@ affinity    0.000000"""
             )
             return False
 
+        # when cluster has a custom prefix enabled, that is appended to node.hostname
+        # in the cluster api, whereas by default it is left off. So, let's just do a full
+        # comparison here to cover that case, the suffixless case is handled below.
+        if addr_info[0].lower() == node.hostname.lower():
+            return True
+
         addr_info_hostname = addr_info[0].split(".")[0]
-        if addr_info_hostname.lower() != node.hostname.lower():
+        node_hostname = node.hostname.split(".")[0]
+
+        if addr_info_hostname.lower() != node_hostname.lower():
             logging.warning(
                 "%s has a hostname that can not be queried via reverse"
                 + " dns (private_ip=%s cyclecloud hostname=%s reverse dns hostname=%s)."
@@ -446,7 +454,7 @@ affinity    0.000000"""
                 node,
                 node.private_ip,
                 node.hostname,
-                addr_info_hostname,
+                addr_info[0],
             )
             return False
         return True
