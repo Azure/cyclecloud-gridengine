@@ -832,7 +832,7 @@ def _parse_scheduler_nodes(
     ge_queues = ge_env.queues
 
     running_jobs: Dict[str, Job] = {}
-    schedulers = qbin.qconf(["-sss"]).splitlines()
+    schedulers = qbin.qconf(["-sss"]).lower().splitlines()
 
     compute_nodes: Dict[str, SchedulerNode] = {}
 
@@ -859,7 +859,8 @@ def _parse_scheduler_nodes(
             continue
 
         hostname = fqdn.split(".", 1)[0]
-        if hostname in schedulers:
+        # allow short or fqdn
+        if hostname.lower() in schedulers or fqdn.lower() in schedulers:
             continue
 
         slots_total = int(_getr(qiqle, "slots_total"))
