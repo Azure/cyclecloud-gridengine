@@ -122,25 +122,37 @@ template "#{Chef::Config['file_cache_path']}/compnode.conf" do
   }
 end
 
-
+# this block prevents "bash[install_gridengine_execd]" from running until the hostname is authorized
 ruby_block "gridengine exec authorized?" do
   block do
     raise "gridengine Execute node not authorized yet" \
     unless \
-    `qconf -se #{node[:hostname]} > /dev/null && qstat -f -s s | grep #{node[:hostname]} | rev | cut -d" " -f1 | rev | grep -vq d`
+    `source /etc/profile.d/sgesettings.sh && qconf -se #{node[:hostname]} > /dev/null && qstat -f -s s | grep #{node[:hostname]}`
     # 1) see if the node has been added at all then 2) see if it is enabled
     # qstat -f is expensive. -s s will limit the jobs to just suspended jobs.
   end
   retries 5
   retry_delay 30
   notifies :start, "service[#{sge_execd_service}]", :delayed
+  notifies :run, "bash[install_gridengine_execd]", :immediately
 end
 
 # this starts the sge_execd process as well - also requires host to be authorized 
 bash "install_gridengine_execd" do
   code <<-EOF
-  
-  cd #{gridengineroot} || exit 1;
+  if [ ! -e /etc/profile.d/sgesettings.sh ]; then
+    echo Waiting for scheduler;
+    exit 1;
+  fi
+  source /etc/profile.d/sgesettings.sh;
+  which qconf > /dev/null || exit 1;
+  qconf -se #{node[:hostname]} > /dev/null && qstat -f -s s | grep #{node[:hostname]}
+  if [ $? != 0 ]; then
+    echo #{node[:hostname]} is not authorized to join the cluster yet.
+    exit 2
+  fi
+
+  cd $SGE_ROOT || exit 1;
   ./inst_sge -x -noremote -auto #{Chef::Config['file_cache_path']}/compnode.conf
   if [ $? == 0 ]; then
     touch /etc/gridengineexecd.installed
@@ -158,6 +170,7 @@ bash "install_gridengine_execd" do
   exit 1
   EOF
   creates "/etc/gridengineexecd.installed"
+  action :nothing
   notifies :stop, "service[#{sge_execd_service}]", :immediately
   notifies :enable, "service[#{sge_execd_service}]", :immediately
   
