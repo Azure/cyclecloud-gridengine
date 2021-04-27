@@ -55,6 +55,7 @@ end
 
 hostname = node[:cyclecloud][:instance][:hostname]
 nodename = node[:cyclecloud][:instance][:hostname]
+nodename_short = nodename.split(".")[0]
 
 gridengineroot = node[:gridengine][:root]     # /sched/ge/ge-8.2.0-demo
 gridenginecell = node[:gridengine][:cell] 
@@ -249,8 +250,26 @@ execute "showalljobs" do
   action :run
 end
 
-execute "schedexecinst" do
-  command "cd #{gridengineroot} && ./inst_sge -x -noremote -auto #{gridengineroot}/conf/#{nodename}.conf && touch #{chefstate}/gridengine.sgesched.schedexecinst"
+bash "schedexecinst" do
+  code <<-EOF
+  
+  cd #{gridengineroot} || exit 1;
+  ./inst_sge -x -noremote -auto #{gridengineroot}/conf/#{nodename}.conf
+  if [ $? == 0 ]; then
+    touch #{chefstate}/gridengine.sgesched.schedexecinst
+    exit 0
+  fi
+  
+  # install_file=$(ls -t #{gridengineroot}/#{gridenginecell}/common/install_logs/*#{nodename_short}*.log | head -n 1)
+  install_file=$(ls -t /tmp/install.* | grep -E 'install\.[0-9]+' | head -n 1)
+  if [ ! -e $install_file ]; then
+    echo There is no install log file 1>&2
+    exit 1
+  fi
+  echo Here are the contents of $install_file 1>&2
+  cat $install_file >&2
+  exit 1
+  EOF
   creates "#{chefstate}/gridengine.sgesched.schedexecinst"
   action :run
 end

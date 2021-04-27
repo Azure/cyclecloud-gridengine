@@ -49,7 +49,8 @@ end
 
 myplatform=node[:platform]
 myplatform = "centos" if node[:platform_family] == "rhel" # TODO: fix this hack for redhat
-
+nodename = node[:cyclecloud][:instance][:hostname]
+nodename_short = nodename.split(".")[0]
 
 # default case systemd
 sge_services = ["sgeexecd", "sgemasterd"]
@@ -136,12 +137,30 @@ ruby_block "gridengine exec authorized?" do
 end
 
 # this starts the sge_execd process as well - also requires host to be authorized 
-execute "install_gridengine_execd" do
-  cwd gridengineroot
-  command "./inst_sge -x -noremote -auto #{Chef::Config['file_cache_path']}/compnode.conf && touch /etc/gridengineexecd.installed"
+bash "install_gridengine_execd" do
+  code <<-EOF
+  
+  cd #{gridengineroot} || exit 1;
+  ./inst_sge -x -noremote -auto #{Chef::Config['file_cache_path']}/compnode.conf
+  if [ $? == 0 ]; then
+    touch /etc/gridengineexecd.installed
+    exit 0
+  fi
+  
+  # install_file=$(ls -t #{gridengineroot}/#{gridenginecell}/common/install_logs/*#{nodename_short}*.log | head -n 1)
+  install_file=$(ls -t /tmp/install.* | grep -E 'install\.[0-9]+' | head -n 1)
+  if [ ! -e $install_file ]; then
+    echo There is no install log file 1>&2
+    exit 1
+  fi
+  echo Here are the contents of $install_file 1>&2
+  cat $install_file >&2
+  exit 1
+  EOF
   creates "/etc/gridengineexecd.installed"
   notifies :stop, "service[#{sge_execd_service}]", :immediately
   notifies :enable, "service[#{sge_execd_service}]", :immediately
+  
 end
 
 
