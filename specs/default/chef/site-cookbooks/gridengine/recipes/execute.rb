@@ -122,33 +122,46 @@ template "#{Chef::Config['file_cache_path']}/compnode.conf" do
   }
 end
 
+# force node.json to be rewritten, then trigger a jetpack log message to update the hostname
+execute "trigger dump node.json" do
+  command "test 0"
+  notifies :run, "ruby_block[dump node.json]", :before
+  notifies :run, "execute[update_hostname]", :immediately
+end
+
+# make sure the hostname in CycleCloud is updated, so that the autoscaler can authorize us.
+execute "update_hostname" do
+  command "jetpack log 'updating hostname for '$(hostname) -p low"
+  action :nothing
+end
+
 # this block prevents "bash[install_gridengine_execd]" from running until the hostname is authorized
 ruby_block "gridengine exec authorized?" do
   block do
-    raise "gridengine Execute node not authorized yet" \
-    unless \
-    `source /etc/profile.d/sgesettings.sh && qconf -se #{node[:hostname]} > /dev/null && qstat -f -s s | grep #{node[:hostname]}`
-    # 1) see if the node has been added at all then 2) see if it is enabled
-    # qstat -f is expensive. -s s will limit the jobs to just suspended jobs.
+    cmd =  Mixlib::ShellOut.new(
+      "source /etc/profile.d/sgesettings.sh  && qconf -se #{node[:cyclecloud][:instance][:hostname]} > /dev/null"
+      ).run_command
+   
+    raise "gridengine node #{node[:cyclecloud][:instance][:hostname]} not authorized yet" unless cmd.exitstatus == 0
   end
   retries 5
   retry_delay 30
-  notifies :start, "service[#{sge_execd_service}]", :delayed
-  notifies :run, "bash[install_gridengine_execd]", :immediately
+  notifies :run, "bash[install_gridengine_execd]", :delayed
 end
 
 # this starts the sge_execd process as well - also requires host to be authorized 
 bash "install_gridengine_execd" do
   code <<-EOF
+  set -x
   if [ ! -e /etc/profile.d/sgesettings.sh ]; then
     echo Waiting for scheduler;
     exit 1;
   fi
   source /etc/profile.d/sgesettings.sh;
   which qconf > /dev/null || exit 1;
-  qconf -se #{node[:hostname]} > /dev/null && qstat -f -s s | grep #{node[:hostname]}
+  qconf -se #{node[:cyclecloud][:instance][:hostname]} > /dev/null
   if [ $? != 0 ]; then
-    echo #{node[:hostname]} is not authorized to join the cluster yet.
+    echo #{node[:cyclecloud][:instance][:hostname]} is not authorized to join the cluster yet. RDH2
     exit 2
   fi
 
@@ -171,7 +184,6 @@ bash "install_gridengine_execd" do
   EOF
   creates "/etc/gridengineexecd.installed"
   action :nothing
-  notifies :stop, "service[#{sge_execd_service}]", :immediately
   notifies :enable, "service[#{sge_execd_service}]", :immediately
   
 end
