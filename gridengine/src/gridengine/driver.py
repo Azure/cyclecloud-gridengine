@@ -1391,6 +1391,13 @@ class HostgroupConstraint(BaseNodeConstraint):
         self.hostgroup = hostgroup
         self.placement_group = placement_group
         self.child_constraint = child_constraint
+    
+    def weight_buckets(
+        self, bucket_weights: List[Tuple["NodeBucket", float]]
+    ) -> List[Tuple["NodeBucket", float]]:
+        if self.child_constraint:
+            return self.child_constraint.weight_buckets(bucket_weights)
+        return bucket_weights
 
     def satisfied_by_node(self, node: Node) -> SatisfiedResult:
         if self.placement_group:
