@@ -1329,7 +1329,7 @@ def _pe_job(
                 job_id,
                 constraints[1:],
                 node_count=num_nodes,
-                colocated=True,
+                colocated=pe.requires_placement_groups,
                 packing_strategy="scatter",
             )
 
@@ -1354,7 +1354,7 @@ def _pe_job(
                 job_id,
                 constraints[1:],
                 iterations=pe_count,
-                colocated=True,
+                colocated=pe.requires_placement_groups,
                 packing_strategy="pack",
             )
 
