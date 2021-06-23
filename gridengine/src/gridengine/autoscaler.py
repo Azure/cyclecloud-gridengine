@@ -60,8 +60,9 @@ def autoscale_grid_engine(
         # many combinations of a u and other states. However,
         # as long as a and u are in there it is down
         state = node.metadata.get("state", "")
-        if "a" in state and "u" in state:
-            invalid_nodes.append(node)
+        if node.state not in ["Preparing", "Acquiring"]:
+            if "a" in state and "u" in state:
+                invalid_nodes.append(node)
 
     # nodes in error state must also be deleted
     nodes_to_delete = ge_driver.clean_hosts(invalid_nodes)

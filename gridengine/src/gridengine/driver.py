@@ -16,6 +16,7 @@ from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.job.job import Job
 from hpc.autoscale.job.nodequeue import NodeQueue
 from hpc.autoscale.job.schedulernode import SchedulerNode
+from hpc.autoscale.node.bucket import NodeBucket
 from hpc.autoscale.node.constraints import (
     BaseNodeConstraint,
     Constraint,
@@ -1391,10 +1392,10 @@ class HostgroupConstraint(BaseNodeConstraint):
         self.hostgroup = hostgroup
         self.placement_group = placement_group
         self.child_constraint = child_constraint
-    
+
     def weight_buckets(
-        self, bucket_weights: List[Tuple["NodeBucket", float]]
-    ) -> List[Tuple["NodeBucket", float]]:
+        self, bucket_weights: List[Tuple[NodeBucket, float]]
+    ) -> List[Tuple[NodeBucket, float]]:
         if self.child_constraint:
             return self.child_constraint.weight_buckets(bucket_weights)
         return bucket_weights
