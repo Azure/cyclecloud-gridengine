@@ -9,6 +9,7 @@ from hpc.autoscale.job import demandprinter
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
+from hpc.autoscale.node.nodemanager import new_node_manager
 from hpc.autoscale.results import DefaultContextHandler
 from hpc.autoscale.util import SingletonLock
 
@@ -56,7 +57,9 @@ def autoscale_grid_engine(
 
     invalid_nodes = []
 
-    for node in ge_env.nodes:
+    tmp_node_mgr = new_node_manager(config, existing_nodes=ge_env.nodes)    
+
+    for node in tmp_node_mgr.get_nodes():
         # many combinations of a u and other states. However,
         # as long as a and u are in there it is down
         state = node.metadata.get("state", "")
