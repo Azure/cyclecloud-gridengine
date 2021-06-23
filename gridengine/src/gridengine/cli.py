@@ -57,9 +57,9 @@ def autoscale(
     logging.debug("End autoscale")
 
 
-def join_cluster(config: Dict, hostnames: List[str], node_names: List[str]) -> None:
+def join_cluster(config: Dict, hostnames: List[str], nodenames: List[str]) -> None:
     """Allow nodes to join the cluster"""
-    ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, node_names)
+    ge_driver, demand_calc, nodes = _find_nodes(config, hostnames, nodenames)
     ge_driver.add_nodes_to_cluster(nodes)
 
 
@@ -120,6 +120,7 @@ def delete_nodes(
 def remove_nodes(
     config: Dict, hostnames: List[str], node_names: List[str], force: bool = False
 ) -> None:
+    """Removes nodes from the cluster without deleting them. Note if the autoscale cronjob is still running, they will be joined again."""
     delete_nodes(config, hostnames, node_names, force, do_delete=False)
 
 
@@ -728,9 +729,9 @@ def main(argv: Iterable[str] = None) -> None:
     add_parser("jobs", jobs)
     add_parser("jobs_and_nodes", jobs_and_nodes)
 
-    add_parser("join_cluster", join_cluster).add_argument(
-        "-H", "--hostname", type=str_list, required=True
-    )
+    join_cluster_parser = add_parser("join_cluster", join_cluster)
+    join_cluster_parser.add_argument("-H", "--hostnames", type=str_list)
+    join_cluster_parser.add_argument("-N", "--nodenames", type=str_list)
 
     add_parser_with_columns("nodes", nodes).add_argument(
         "--constraint-expr", "-C", default="[]"
