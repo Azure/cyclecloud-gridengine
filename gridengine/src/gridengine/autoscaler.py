@@ -11,7 +11,7 @@ from hpc.autoscale.job.demandcalculator import DemandCalculator
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.node.nodemanager import new_node_manager
 from hpc.autoscale.results import DefaultContextHandler
-from hpc.autoscale.util import SingletonLock
+from hpc.autoscale.util import SingletonLock, partition_single
 
 from gridengine import environment as envlib
 from gridengine.environment import GridEngineEnvironment
@@ -53,19 +53,30 @@ def autoscale_grid_engine(
 
     config = ge_driver.preprocess_config(config)
 
-    logging.debug("Driver = %s", ge_driver)
+    logging.fine("Driver = %s", ge_driver)
 
     invalid_nodes = []
 
-    tmp_node_mgr = new_node_manager(config, existing_nodes=ge_env.nodes)    
+    # we need an instance without any scheduler nodes, so don't
+    # pass in the existing nodes.
+    tmp_node_mgr = new_node_manager(config)
 
-    for node in tmp_node_mgr.get_nodes():
+    by_hostname = partition_single(
+        tmp_node_mgr.get_nodes(), lambda n: n.hostname_or_uuid
+    )
+
+    for node in ge_env.nodes:
         # many combinations of a u and other states. However,
         # as long as a and u are in there it is down
         state = node.metadata.get("state", "")
-        if node.state not in ["Preparing", "Acquiring"]:
-            if "a" in state and "u" in state:
-                invalid_nodes.append(node)
+        cc_node = by_hostname.get(node.hostname)
+        ccnodeid = node.resources.get("ccnodeid")
+        if cc_node:
+            if not ccnodeid or ccnodeid == cc_node.delayed_node_id.node_id:
+                if cc_node.state in ["Preparing", "Acquiring"]:
+                    continue
+        if "a" in state and "u" in state:
+            invalid_nodes.append(node)
 
     # nodes in error state must also be deleted
     nodes_to_delete = ge_driver.clean_hosts(invalid_nodes)
