@@ -61,9 +61,48 @@ class GridEngineDriver:
             self.read_only = False
         self._hostgroup_cache: Dict[str, List[str]] = {}
 
+    def _ensure_scheduler_in_each_hostgroup(self) -> None:
+        if not self.autoscale_config.get("grideninge", {}).get(
+            "add_schedulers_to_hostgroups", True
+        ):
+            return
+        scheduler_hostnames = self.ge_env.qbin.qconf(["-sss"]).split()
+
+        for hostgroup in self.ge_env.qbin.qconf(["-shgrpl"]).split():
+            fqdns = self.ge_env.qbin.qconf(["-shgrp_resolved", hostgroup]).split()
+            hostnames = [n.split(".")[0] for n in fqdns]
+            for sched_hostname in scheduler_hostnames:
+                if sched_hostname not in hostnames:
+                    logging.warning(
+                        "Scheduler %s is not in hostgroup %s", sched_hostname, hostgroup
+                    )
+                    logging.warning(
+                        'To disable this behavior, set {"gridengine": "add_schedulers_to_hostgroups": false}}'
+                    )
+                    fd, hg_path = tempfile.mkstemp()
+                    contents = self.ge_env.qbin.qconf(["-shgrp", hostgroup]).strip()
+                    if contents.endswith("NONE"):
+                        contents = contents[: -len("NONE")]
+
+                    contents = "{}\\\n{}".format(contents, sched_hostname)
+                    logging.getLogger("gridengine.driver").info(
+                        "hostgroup contents written to %s", hg_path
+                    )
+                    logging.getLogger("gridengine.driver").info(contents)
+                    with open(fd, "w") as fw:
+                        fw.write(contents)
+                    self.ge_env.qbin.qconf(["-Mhgrp", hg_path])
+
     def initialize_environment(self) -> None:
         if self.read_only:
             return
+
+        try:
+            self._ensure_scheduler_in_each_hostgroup()
+        except Exception:
+            logging.exception(
+                "Failed to ensure scheduler was added to each hostgroup. This may cause stability issues."
+            )
 
         expected = 'Complex attribute "ccnodeid" does not exist'
         try:
