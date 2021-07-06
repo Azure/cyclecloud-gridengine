@@ -123,23 +123,12 @@ end
 sgemaster_path="#{gridengineroot}/#{gridenginecell}/common/sgemaster"
 sgeexecd_path="#{gridengineroot}/#{gridenginecell}/common/sgeexecd"
 
-execute "fix sgemasterd service shebang" do
-  command "(head -n 1 #{sgemaster_path} | grep -q '#!/bin/') || (cp #{sgemaster_path} #{sgemaster_path}.bkp && echo '#!/bin/sh' > #{sgemaster_path} && cat #{sgemaster_path}.bkp >> #{sgemaster_path} && rm -f #{sgemaster_path}.bkp)"
-  action :run
-end
-
-execute "fix sgeexecd service shebang" do
-  command "(head -n 1 #{sgeexecd_path} | grep -q '#!/bin/') || (cp #{sgeexecd_path} #{sgeexecd_path}.bkp && echo '#!/bin/sh' > #{sgeexecd_path} && cat #{sgeexecd_path}.bkp >> #{sgeexecd_path} && rm -f #{sgeexecd_path}.bkp)"
-  action :run
-end
-
 execute "set qmaster hostname" do
   if node[:platform_family] == "rhel" && node[:platform_version] < "7" then
     command "echo #{node[:hostname]} > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
   else
     command "hostname -f > #{gridengineroot}/#{gridenginecell}/common/act_qmaster"
   end
-  notifies :run, 'execute[fix sgemasterd service shebang]', :immediately
 end
 
 case node[:platform_family]

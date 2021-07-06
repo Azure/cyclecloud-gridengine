@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 
 INSTALL_PYTHON3=0
-USE_JETPACK_PYTHON3=0
 INSTALL_VIRTUALENV=0
+INSTALL_PIP=0
 VENV=/opt/cycle/gridengine/venv
+OS=$(awk -F= '/^NAME/{print $2}' /etc/os-release | awk '{print tolower($0)}')
+
+if [ "$OS" == '"ubuntu"' ]; then
+    INSTALL_CMD=apt-get
+    # ubuntu 18 does not include pip by default
+    INSTALL_PIP=1
+else
+    INSTALL_CMD=yum
+fi
 
 
 while (( "$#" )); do
     case "$1" in
         --install-python3)
             INSTALL_PYTHON3=1
+            INSTALL_PIP=1
             INSTALL_VIRTUALENV=1
-            shift
-            ;;
-        --use-jetpack-python3)
-            USE_JETPACK_PYTHON3=1
             shift
             ;;
         --install-venv)
@@ -24,6 +30,10 @@ while (( "$#" )); do
         --venv)
             VENV=$2
             shift 2
+            ;;
+        --help)
+            echo ./install.sh [--install-python3] [--install-venv] [--venv $VENV]
+            exit 1
             ;;
 
         -*|--*=)
@@ -41,17 +51,13 @@ echo INSTALL_PYTHON3=$INSTALL_PYTHON3
 echo INSTALL_VIRTUALENV=$INSTALL_VIRTUALENV
 echo VENV=$VENV
 
-
-if [ $USE_JETPACK_PYTHON3 == 1 ]; then
-    export PATH=/opt/cycle/jetpack/system/embedded/bin:$PATH
-else
-    export PATH=$(python -c '
+export PATH=$(python -c '
 import os
 paths = os.environ["PATH"].split(os.pathsep)
 cc_home = os.getenv("CYCLECLOUD_HOME", "/opt/cycle/jetpack")
 print(os.pathsep.join(
     [p for p in paths if cc_home not in p]))')
-fi
+
 
 echo $PATH > /tmp/debug_path.txt
 which python3 >> /tmp/debug_path.txt
@@ -59,9 +65,19 @@ which python3 >> /tmp/debug_path.txt
 which python3 > /dev/null;
 if [ $? != 0 ]; then
     if [ $INSTALL_PYTHON3 == 1 ]; then
-        yum install -y python3 || exit 1
+        $INSTALL_CMD install -y python3 || exit 1
     else
         echo Please install python3 >&2;
+        exit 1
+    fi
+fi
+
+python3 -m pip 2>&1 1> /dev/null
+if [ $? != 0 ]; then
+    if [ $INSTALL_PIP == 1 ]; then
+        $INSTALL_CMD install -y python3-pip || exit 1
+    else
+        echo Please install python3-pip >&2;
         exit 1
     fi
 fi

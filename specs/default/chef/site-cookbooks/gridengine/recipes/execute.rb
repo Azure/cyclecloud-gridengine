@@ -138,11 +138,12 @@ end
 # this block prevents "bash[install_gridengine_execd]" from running until the hostname is authorized
 ruby_block "gridengine exec authorized?" do
   block do
+    # use . here as /bin/sh may not have source defined. (ubuntu)
     cmd =  Mixlib::ShellOut.new(
-      "source /etc/profile.d/sgesettings.sh  && qconf -se #{node[:cyclecloud][:instance][:hostname]} > /dev/null"
+      ". /etc/profile.d/sgesettings.sh && qconf -se #{node[:cyclecloud][:instance][:hostname]} > /dev/null"
       ).run_command
-   
-    raise "gridengine node #{node[:cyclecloud][:instance][:hostname]} not authorized yet" unless cmd.exitstatus == 0
+      exit_code=cmd.exitstatus
+    raise "gridengine node #{node[:cyclecloud][:instance][:hostname]} not authorized yet. Exit code #{exit_code}" unless cmd.exitstatus == 0
   end
   retries 5
   retry_delay 30
@@ -161,7 +162,7 @@ bash "install_gridengine_execd" do
   which qconf > /dev/null || exit 1;
   qconf -se #{node[:cyclecloud][:instance][:hostname]} > /dev/null
   if [ $? != 0 ]; then
-    echo #{node[:cyclecloud][:instance][:hostname]} is not authorized to join the cluster yet. RDH2
+    echo #{node[:cyclecloud][:instance][:hostname]} is not authorized to join the cluster yet.
     exit 2
   fi
 

@@ -4,8 +4,8 @@ After=network.target remote-fs.target
 
 [Service]
 Type=forking
-ExecStart=<%= @gridengineroot %>/<%= @gridenginecell %>/common/sgemaster start
-ExecStop=<%= @gridengineroot %>/<%= @gridenginecell %>/common/sgemaster stop
+ExecStart=/bin/sh <%= @gridengineroot %>/<%= @gridenginecell %>/common/sgemaster start
+ExecStop=/bin/sh <%= @gridengineroot %>/<%= @gridenginecell %>/common/sgemaster stop
 
 [Install]
 WantedBy=multi-user.target
