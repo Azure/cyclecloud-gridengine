@@ -173,14 +173,14 @@ Order = 10
         DefaultValue = Standard_D12_v2
 
         [[[parameter HPCMachineType]]]
-        Label = Execute VM Type
+        Label = HPC VM Type
         Description = The VM type for HPC nodes
         ParameterType = Cloud.MachineType
         DefaultValue = Standard_F4
         Config.Multiselect = true
 
         [[[parameter HTCMachineType]]]
-        Label = Execute VM Type
+        Label = HTC VM Type
         Description = The VM type for HTC nodes
         ParameterType = Cloud.MachineType
         DefaultValue = Standard_F2s_v2
