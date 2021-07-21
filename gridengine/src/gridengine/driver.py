@@ -79,19 +79,29 @@ class GridEngineDriver:
                     logging.warning(
                         'To disable this behavior, set {"gridengine": "add_schedulers_to_hostgroups": false}}'
                     )
-                    fd, hg_path = tempfile.mkstemp()
-                    contents = self.ge_env.qbin.qconf(["-shgrp", hostgroup]).strip()
-                    if contents.endswith("NONE"):
-                        contents = contents[: -len("NONE")]
+                    hg_path = None
+                    try:
+                        fd, hg_path = tempfile.mkstemp()
+                        contents = self.ge_env.qbin.qconf(["-shgrp", hostgroup]).strip()
+                        if contents.endswith("NONE"):
+                            contents = contents[: -len("NONE")]
 
-                    contents = "{}\\\n{}".format(contents, sched_hostname)
-                    logging.getLogger("gridengine.driver").info(
-                        "hostgroup contents written to %s", hg_path
-                    )
-                    logging.getLogger("gridengine.driver").info(contents)
-                    with open(fd, "w") as fw:
-                        fw.write(contents)
-                    self.ge_env.qbin.qconf(["-Mhgrp", hg_path])
+                        contents = "{}\\\n{}".format(contents, sched_hostname)
+                        logging.getLogger("gridengine.driver").info(
+                            "hostgroup contents written to %s", hg_path
+                        )
+                        logging.getLogger("gridengine.driver").info(contents)
+                        with open(fd, "w") as fw:
+                            fw.write(contents)
+                        self.ge_env.qbin.qconf(["-Mhgrp", hg_path])
+                    finally:
+                        if hg_path and os.path.exists(hg_path):
+                            try:
+                                os.remove(hg_path)
+                            except Exception:
+                                logging.exception(
+                                    "Failed to remove temporary file %s.", hg_path
+                                )
 
     def initialize_environment(self) -> None:
         if self.read_only:
