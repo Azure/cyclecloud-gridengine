@@ -1,6 +1,7 @@
 from typing import Callable, Dict, List, Set
 
 from hpc.autoscale.job.demandcalculator import DemandCalculator
+from hpc.autoscale.node import constraints
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import NodeManager
 from hpc.autoscale.util import partition_single
@@ -151,7 +152,7 @@ def validate_nodes(config: Dict, dcalc: DemandCalculator, warn: WarnFunction) ->
     pg_to_hg: Dict[str, Dict[str, List[Node]]] = {}
 
     for node in dcalc.node_mgr.get_nodes():
-        hostgroups = get_node_hostgroups(node)
+        hostgroups = get_node_hostgroups(config, node)
         if not hostgroups:
             failure = True
             warn(
@@ -179,10 +180,10 @@ def validate_nodes(config: Dict, dcalc: DemandCalculator, warn: WarnFunction) ->
             if hg in processed:
                 failure = True
                 duplicates[hg].append(pg_name)
-        processed.add(hg)
-        if hg not in duplicates:
-            # ideal case is they are all size 1 lists
-            duplicates[hg] = [pg_name]
+            processed.add(hg)
+            if hg not in duplicates:
+                # ideal case is they are all size 1 lists
+                duplicates[hg] = [pg_name]
 
     warned_longform = False
     for pg_name, multiple_hgs in duplicates.items():
@@ -215,5 +216,43 @@ def validate_nodes(config: Dict, dcalc: DemandCalculator, warn: WarnFunction) ->
                     ["%s(%s)" % (x.name, x.hostname) for x in pg_to_hg[bad_hg][bad_pg]]
                 )
                 warn("        %s = %s", bad_pg, names)
+
+    return not failure
+
+
+def validate_default_hostgroups(
+    config: Dict, ge_env: GridEngineEnvironment, warn: WarnFunction,
+) -> bool:
+    default_hostgroups = config.get("gridengine", {}).get("default_hostgroups", [])
+    failure = False
+    for dh in default_hostgroups:
+        # ensure it is a {"select": {}, "hostgroups": []} expression
+        if set(list(dh.keys())) != set(["select", "hostgroups"]):
+            warn(
+                "    Invalid entry in gridengine.default_hostgroups. Expected select and hostgroups as keys. %s",
+                dh,
+            )
+            failure = True
+            continue
+
+        try:
+            constraints.get_constraints(dh["select"])
+        except Exception as e:
+            warn("     Invalid select constraint: %s - %s", dh["select"], e)
+            failure = True
+            continue
+
+        hostgroups = dh["hostgroups"]
+        if isinstance(hostgroups, str):
+            hostgroups = [hostgroups]
+
+        for hg in hostgroups:
+            if hg not in ge_env.hostgroups:
+                warn(
+                    "    Unknown hostgroup %s. See gridengine.default_hostgroups - %s",
+                    hg,
+                    dh,
+                )
+                failure = True
 
     return not failure

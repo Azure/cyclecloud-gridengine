@@ -94,7 +94,7 @@ def delete_nodes(
                     node.assignments,
                 )
 
-            if node.keep_alive:
+            if node.keep_alive and do_delete:
                 error(
                     "%s is marked as KeepAlive=true. Please exclude this.", node,
                 )
@@ -220,6 +220,8 @@ def validate_func(config: Dict) -> None:
         failure = validate.validate_queue_has_hosts(queue, ge_env.qbin, warn) or failure
         failure = validate.validate_ht_hostgroup(queue, ge_env, warn) or failure
         failure = validate.validate_pe_hostgroups(queue, warn) or failure
+
+    failure = validate.validate_default_hostgroups(config, ge_env, warn) or failure
 
     if failure:
         sys.exit(1)
@@ -397,6 +399,18 @@ def initconfig(writer: TextIO = sys.stdout, **config: Dict) -> None:
         if hg_name not in config["gridengine"]["hostgroups"]:
             config["gridengine"]["hostgroups"][hg_name] = {}
         config["gridengine"]["hostgroups"][hg_name]["constraints"] = constraint_json
+
+    for expr_json in config.pop("default_hostgroups", []):
+
+        if "default_hostgroups" not in config["gridengine"]:
+            config["gridengine"]["default_hostgroups"] = []
+        if set(list(expr_json.keys())) != set(["select", "hostgroups"]):
+            print(
+                "Invalid default_hostgroups argument - requires select and hostgroups to be defined.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        config["gridengine"]["default_hostgroups"].append(expr_json)
 
     for key in list(config.keys()):
 
@@ -696,6 +710,13 @@ def main(argv: Iterable[str] = None) -> None:
         action="append",
         default=[],
         dest="default_resources",
+    )
+    initconfig_parser.add_argument(
+        "--default-hostgroups",
+        type=json.loads,
+        action="append",
+        default=[],
+        dest="default_hostgroups",
     )
     initconfig_parser.add_argument(
         "--relevant-complexes",

@@ -515,24 +515,11 @@ bash 'setup cyclecloud-gridengine' do
   INSTALLDIR=/opt/cycle/gridengine
   mkdir -p $INSTALLDIR/venv
   ./install.sh --install-python3 --venv $INSTALLDIR/venv
-  
-  azge initconfig --cluster-name #{node[:cyclecloud][:cluster][:name]} \
-                  --username     #{node[:cyclecloud][:config][:username]} \
-                  --password     #{node[:cyclecloud][:config][:password]} \
-                  --url          #{node[:cyclecloud][:config][:web_server]} \
-                  --lock-file    $INSTALLDIR/scalelib.lock \
-                  --log-config   $INSTALLDIR/logging.conf \
-                  --default-resource '{"select": {}, "name": "slots", "value": "node.vcpu_count"}' \
-                  --default-resource '{"select": {}, "name": "slot_type", "value": "node.nodearray"}' \
-                  --default-resource '{"select": {}, "name": "nodearray", "value": "node.nodearray"}' \
-                  --default-resource '{"select": {}, "name": "m_mem_free", "value": "node.resources.memgb", "subtract": "1g"}' \
-                  --default-resource '{"select": {}, "name": "mfree", "value": "node.resources.m_mem_free"}' \
-                  --default-resource '{"select": {}, "name": "exclusive", "value": "true"}' \
-                  --disable-pgs-for-pe make \
-                  --hostgroup-constraint @cyclempi='{"node.colocated": true}' \
-                  --hostgroup-constraint @cyclehtc='{"node.colocated": false}' \
-                  --idle-timeout #{node[:gridengine][:idle_timeout]} \
-                  --relevant-complexes #{relevant_complexes_str} > $INSTALLDIR/autoscale.json
+  ./generate_autoscale_json.sh --cluster-name #{node[:cyclecloud][:cluster][:name]} \
+                               --username     #{node[:cyclecloud][:config][:username]} \
+                               --password     #{node[:cyclecloud][:config][:password]} \
+                               --url          #{node[:cyclecloud][:config][:web_server]} \
+                               --relevant-complexes #{relevant_complexes_str}
 
   touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
   EOH

@@ -130,6 +130,8 @@ def execute() -> None:
         _add("packages/" + fil, path)
 
     _add("install.sh", mode=os.stat("install.sh")[0])
+    _add("generate_autoscale_json.sh", mode=os.stat("generate_autoscale_json.sh")[0])
+    _add("logging.conf", "gridengine/conf/logging.conf")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@ import typing
 from io import StringIO
 from typing import Any, Dict, List, Optional, Union
 
+from hpc.autoscale import hpclogging as logging
+from hpc.autoscale.node import constraints
 from hpc.autoscale.node.node import Node
 
 if typing.TYPE_CHECKING:
@@ -53,16 +55,43 @@ def parse_ge_config(lines: List[str]) -> Dict[str, str]:
     return config
 
 
-def get_node_hostgroups(node: Node) -> List[str]:
+def get_node_hostgroups(config: Dict, node: Node) -> List[str]:
     hostgroups_expr = node.metadata.get("gridengine_hostgroups")
 
     if not hostgroups_expr:
         hostgroups_expr = node.software_configuration.get("gridengine_hostgroups")
 
     if not hostgroups_expr:
-        return []
+        default_hostgroups = config.get("gridengine", {}).get("default_hostgroups", [])
+        for dh in default_hostgroups:
+            if "select" not in dh:
+                logging.warning(
+                    "Missing key 'select' in gridengine.default_hostgroups %s", dh
+                )
+                continue
+            if "hostgroups" not in dh:
+                logging.warning(
+                    "Missing key 'hostgroups' in gridengine.default_hostgroups %s", dh
+                )
+                continue
+            constraint_list = constraints.get_constraints(dh["select"])
+            satisfied = True
+            for c in constraint_list:
+                if not c.satisfied_by_node(node):
+                    satisfied = False
+                    break
+            if satisfied:
+                hostgroups = dh["hostgroups"]
+                if isinstance(hostgroups, str):
+                    hostgroups = [hostgroups]
 
-    return re.split(",| +", hostgroups_expr)
+                hostgroups_expr = " ".join(hostgroups)
+                # set it in metadata so we can output it in the cli
+                node.metadata["gridengine_hostgroups"] = hostgroups_expr
+
+    if hostgroups_expr:
+        return re.split(",| +", hostgroups_expr)
+    return []
 
 
 def add_node_to_hostgroup(

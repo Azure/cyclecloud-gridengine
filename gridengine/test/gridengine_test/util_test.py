@@ -1,4 +1,12 @@
-from gridengine.util import _tokenize_ge_list, parse_hostgroup_mapping
+from typing import Dict, List, Union
+
+from hpc.autoscale.job.schedulernode import SchedulerNode
+
+from gridengine.util import (
+    _tokenize_ge_list,
+    get_node_hostgroups,
+    parse_hostgroup_mapping,
+)
 
 
 def test_parse_hostgroup_mapping() -> None:
@@ -52,3 +60,31 @@ def test_ge_list_tokenizing() -> None:
         "[@mpihosts=mpi mpislots]",
         "[@smphosts=smp1,smp2]",
     ] == _tokenize_ge_list("NONE,[@mpihosts=mpi mpislots],[@smphosts=smp1,smp2]")
+
+
+def test_get_node_hostgroups() -> None:
+    def _test(select: Dict, hostgroups: Union[str, List[str]]) -> Dict:
+        node = SchedulerNode("localhost")
+        config = {
+            "gridengine": {
+                "default_hostgroups": [{"select": select, "hostgroups": hostgroups}]
+            }
+        }
+        return get_node_hostgroups(config, node)
+
+    assert _test({}, []) == []
+    assert _test({}, "@cyclehtc") == ["@cyclehtc"]
+    assert _test({}, ["@cyclehtc"]) == ["@cyclehtc"]
+    assert _test({}, ["@cyclehtc", "@cyclempi"]) == [
+        "@cyclehtc",
+        "@cyclempi",
+    ]
+    assert _test({}, "@cyclehtc @cyclempi") == [
+        "@cyclehtc",
+        "@cyclempi",
+    ]
+    assert _test({}, "@cyclehtc,@cyclempi") == [
+        "@cyclehtc",
+        "@cyclempi",
+    ]
+    assert _test({"node.nodearray": "nonsense"}, "@cyclehtc,@cyclempi") == []

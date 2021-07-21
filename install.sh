@@ -3,7 +3,8 @@
 INSTALL_PYTHON3=0
 INSTALL_VIRTUALENV=0
 INSTALL_PIP=0
-VENV=/opt/cycle/gridengine/venv
+INSTALLDIR=/opt/cycle/gridengine
+VENV=$INSTALLDIR/venv
 OS=$(awk -F= '/^NAME/{print $2}' /etc/os-release | awk '{print tolower($0)}')
 
 if [ "$OS" == '"ubuntu"' ]; then
@@ -98,11 +99,12 @@ python3 -m virtualenv $VENV
 source $VENV/bin/activate
 # not sure why but pip gets confused installing frozendict locally
 # if you don't install it first. It has no dependencies so this is safe.
-pip install packages/*
+pip install --force-reinstall packages/* 
 
 cat > $VENV/bin/azge <<EOF
 #!$VENV/bin/python
-
+import warnings
+warnings.filterwarnings("ignore", message="Please use driver.new_singleton_lock")
 from gridengine.cli import main
 main()
 EOF
@@ -117,6 +119,9 @@ fi
 ln -sf $VENV/bin/azge /root/bin/
 
 echo 'azge' installed. A symbolic link was made to /usr/local/bin/azge and /root/bin
+
+cp logging.conf $INSTALLDIR/
+
 crontab -l > /tmp/current_crontab
 grep -q 'Created by cyclecloud-gridengine install.sh' /tmp/current_crontab
 if [ $? != 0 ]; then

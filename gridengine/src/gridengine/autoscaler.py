@@ -289,7 +289,7 @@ def print_demand(
     for node in demand_result.matched_nodes + demand_result.unmatched_nodes:
         # ignore @allhosts - every node will eventually end up there.
         node.available["hostgroups"] = [
-            x for x in get_node_hostgroups(node) if x != "@allhosts"
+            x for x in get_node_hostgroups(config, node) if x != "@allhosts"
         ]
         node._resources["hostgroups"] = node.available["hostgroups"]
 

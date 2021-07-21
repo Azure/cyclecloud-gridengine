@@ -21,6 +21,7 @@ The application requires python3 with virtualenv.
 tar xzf cyclecloud-gridengine-pkg-*.tar.gz
 cd cyclecloud-gridengine
 ./install.sh
+./generate_autoscale_json.sh --username USER --password PASS --cluster-name CLUSTER --url https://cyclecloud-address:port
 ```
 
 ### Important Files

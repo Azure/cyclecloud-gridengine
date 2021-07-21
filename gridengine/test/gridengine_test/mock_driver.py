@@ -25,11 +25,12 @@ def _elem(parent: Element, tag: str, data: Optional[str] = None) -> Element:
 
 
 class MockQsub:
-    def __init__(self, ge_env: GridEngineEnvironment) -> None:
+    def __init__(self, ge_env: GridEngineEnvironment, config: Dict = {}) -> None:
         self.doc = Element("gridengine")
         self.job_info = _elem(self.doc, "job_info")
         self.current_job_number = 1
         self.ge_env = ge_env
+        self.config = config
 
     def qsub(self, expr: str) -> None:
         job_list = _elem(self.job_info, "job_list")
@@ -100,7 +101,7 @@ class MockQsub:
         writer.write(xmlstr)
 
     def parse_jobs(self) -> List[Job]:
-        ret = _parse_jobs(self.doc, self.ge_env)
+        ret = _parse_jobs(self.doc, self.ge_env, self.config)
 
         from gridengine import util
 

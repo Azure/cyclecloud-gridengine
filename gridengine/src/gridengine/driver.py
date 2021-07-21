@@ -400,13 +400,15 @@ affinity    0.000000"""
             )
             return False
 
-        hostgroups = get_node_hostgroups(node)
+        hostgroups = get_node_hostgroups(self.autoscale_config, node)
         if not hostgroups:
             logging.warning(
                 "No hostgroups were found for %s. Adding to @allhosts only. Please manually add "
                 + "this node to a hostgroup using qconf. If this was a manually started node, add "
-                + "'gridengine.hostgroups = @preferred-hostgroup' to the nodearray's configuration "
-                + "section so that future nodes will automatically be added.",
+                + "'gridengine_hostgroups = @preferred-hostgroup' to the nodearray's configuration "
+                + "section so that future nodes will automatically be added. You may also set a"
+                + "default hostgroup by adding the following to your autoscale.json:\n"
+                + '{"gridengine": {"default_hostgroups": [{"select": {}, "hostgroups": ["@myhostgroup"]}]}}',
                 node,
             )
             add_node_to_hostgroup(node, self.ge_env.hostgroups["@allhosts"])
@@ -576,7 +578,7 @@ license_oversubscription NONE"""
     def _add_slots(self, node: Node) -> bool:
         queues = []
 
-        for hostgroup in get_node_hostgroups(node):
+        for hostgroup in get_node_hostgroups(self.autoscale_config, node):
             for queue in self.ge_env.queues.values():
                 if hostgroup in queue.hostlist:
                     queues.append(queue.qname)
@@ -615,13 +617,12 @@ license_oversubscription NONE"""
                     self.ge_env.qbin.qconf(["-Me", tempp])
                 else:
                     raise
-        except Exception:
+        finally:
             if os.path.exists(tempp):
                 try:
                     os.remove(tempp)
                 except Exception:
                     pass
-            raise
 
         self.ge_env.qbin.qconf(["-as", node.hostname])
         self.ge_env.qbin.qconf(["-ah", node.hostname])
@@ -870,13 +871,13 @@ def _get_jobs_and_nodes(
     doc = ElementTree.parse(raw_xml_file)
     root = doc.getroot()
 
-    nodes, running_jobs = _parse_scheduler_nodes(root, ge_env)
-    pending_jobs = _parse_jobs(root, ge_env)
+    nodes, running_jobs = _parse_scheduler_nodes(root, ge_env, autoscale_config)
+    pending_jobs = _parse_jobs(root, ge_env, autoscale_config)
     return pending_jobs, nodes
 
 
 def _parse_scheduler_nodes(
-    root: Element, ge_env: envlib.GridEngineEnvironment,
+    root: Element, ge_env: envlib.GridEngineEnvironment, config: Dict,
 ) -> Tuple[List[SchedulerNode], List[Job]]:
     qbin = ge_env.qbin
     ge_queues = ge_env.queues
@@ -1014,7 +1015,7 @@ def _parse_scheduler_nodes(
             s = ge_env.complexes["slots"].shortcut
             compute_node.available[s] = compute_node.available[slots_key]
 
-        _assign_jobs(compute_node, qiqle, running_jobs, ge_env)
+        _assign_jobs(compute_node, qiqle, running_jobs, ge_env, config)
 
         # TODO RDH
         compute_node.metadata["gridengine_hostgroups"] = ",".join(
@@ -1053,10 +1054,11 @@ def _assign_jobs(
     e: Element,
     running_jobs: Dict[str, Job],
     ge_env: GridEngineEnvironment,
+    config: Dict,
 ) -> None:
     # use assign_job so we just accept that this job is running on this node.
     for jle in e.findall("job_list"):
-        parsed_running_jobs = _parse_job(jle, ge_env) or []
+        parsed_running_jobs = _parse_job(jle, ge_env, config) or []
         for running_job in parsed_running_jobs:
             if not running_jobs.get(running_job.name):
                 running_jobs[running_job.name] = running_job
@@ -1066,12 +1068,14 @@ def _assign_jobs(
         compute_node.assign(_getr(jle, "JB_job_number"))
 
 
-def _parse_jobs(root: Element, ge_env: GridEngineEnvironment) -> List[Job]:
+def _parse_jobs(
+    root: Element, ge_env: GridEngineEnvironment, config: Dict
+) -> List[Job]:
     assert isinstance(ge_env, GridEngineEnvironment)
     autoscale_jobs: List[Job] = []
 
     for jijle in root.findall("job_info/job_list"):
-        jobs = _parse_job(jijle, ge_env)
+        jobs = _parse_job(jijle, ge_env, config)
         if jobs:
             autoscale_jobs.extend(jobs)
 
@@ -1081,7 +1085,9 @@ def _parse_jobs(root: Element, ge_env: GridEngineEnvironment) -> List[Job]:
 IGNORE_STATES = set("hEe")
 
 
-def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
+def _parse_job(
+    jijle: Element, ge_env: GridEngineEnvironment, config: Dict
+) -> Optional[Job]:
     assert isinstance(ge_env, GridEngineEnvironment)
 
     ge_queues: Dict[str, GridEngineQueue] = ge_env.queues
@@ -1144,6 +1150,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
     if pe_elem is not None:
         # dealing with parallel jobs (qsub -pe ) is much more complicated
         pe_jobs = _pe_job(
+            config,
             ge_env,
             ge_queue,
             jijle,
@@ -1188,7 +1195,7 @@ def _parse_job(jijle: Element, ge_env: GridEngineEnvironment) -> Optional[Job]:
 
             child_constraint = hostgroup.make_constraint(ge_env, owner, project, constraints[0])  # type: ignore
             queue_and_hostgroup_constraints.append(
-                HostgroupConstraint(hostgroup, None, child_constraint)
+                HostgroupConstraint(config, hostgroup, None, child_constraint)
             )
 
         if len(queue_and_hostgroup_constraints) > 1:
@@ -1284,6 +1291,7 @@ def _apply_constraints(
 
 
 def _pe_job(
+    config: Dict,
     ge_env: GridEngineEnvironment,
     ge_queue: GridEngineQueue,
     jijle: Element,
@@ -1352,7 +1360,9 @@ def _pe_job(
                 hostgroup = ge_queue.bound_hostgroups[hg_name]
                 child_constraint = hostgroup.make_constraint(ge_env, owner, project, constraints[0])  # type: ignore
                 queue_and_hostgroup_constraints.append(
-                    HostgroupConstraint(hostgroup, placement_group, child_constraint)
+                    HostgroupConstraint(
+                        config, hostgroup, placement_group, child_constraint
+                    )
                 )
 
         if len(queue_and_hostgroup_constraints) > 1:
@@ -1434,10 +1444,12 @@ def _pe_job(
 class HostgroupConstraint(BaseNodeConstraint):
     def __init__(
         self,
+        config: Dict,
         hostgroup: BoundHostgroup,
         placement_group: Optional[ht.PlacementGroup],
         child_constraint: Optional[NodeConstraint] = None,
     ) -> None:
+        self.config = config
         self.hostgroup = hostgroup
         self.placement_group = placement_group
         self.child_constraint = child_constraint
@@ -1475,7 +1487,7 @@ class HostgroupConstraint(BaseNodeConstraint):
                 ],
             )
 
-        node_hostgroups: List[str] = get_node_hostgroups(node)
+        node_hostgroups: List[str] = get_node_hostgroups(self.config, node)
 
         if not node_hostgroups:
             node_hostgroups = [] if node.exists else [self.hostgroup.name]
@@ -1497,7 +1509,7 @@ class HostgroupConstraint(BaseNodeConstraint):
         return SatisfiedResult("success", self, node)
 
     def do_decrement(self, node: Node) -> bool:
-        current_hostgroups = get_node_hostgroups(node)
+        current_hostgroups = get_node_hostgroups(self.config, node)
         node_hostgroups = set(current_hostgroups or [self.hostgroup.name])
 
         hg_intersect = self.hostgroup.name in node_hostgroups
