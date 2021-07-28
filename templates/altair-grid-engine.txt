@@ -3,10 +3,10 @@
 ## Cluster Configuration File ##
 ################################
 
-[cluster Univa Grid Engine]
+[cluster Altair Grid Engine]
 FormLayout = selectionpanel
 Category = Schedulers
-IconUrl = /static/cloud/cluster/ui/ClusterIcon/univa-large.png
+IconUrl = /static/cloud/cluster/ui/ClusterIcon/altair-icon.png
 
 Autoscale = $Autoscale
 
@@ -159,57 +159,53 @@ Autoscale = $Autoscale
 
 [parameters About]
 Order = 1
-
-    [[parameters About Univa Grid Engine]]
+    [[parameters About Altair Grid Engine]]
 
         [[[parameter gridengine]]]
         HideLabel = true
         Config.Plugin = pico.widget.HtmlTemplateWidget
-        Config.Template = '''<table role="presentation"> <tr><td> <a> <img width="256" alt="Univa logo" src="static/cloud/cluster/ui/ClusterIcon/univa-large.png"> </a>  </td></tr> 
-                                <tr><td><big><b>Thank you for trying Univa Grid Engine! </big> </b></td></tr> 
-                                <tr><td><p>Univa Grid Engine is the leading implementation of the popular Grid Engine workload scheduling and
-                                         management system used by thousands customers around the world. Univa Grid Engine helps organizations 
-                                         optimize throughput and performance, share resources more effectively, and improve ROI for a wide 
+        Config.Template = '''<table role="presentation"> <tr><td> <a> <img width="512" alt="Altair logo" src="static/cloud/cluster/ui/ClusterIcon/altair.png"> </a>  </td></tr> 
+                                <tr><td><big><b>Thank you for trying Altair&#0153 Grid Engine&#0153! </big> </b></td></tr> 
+                                <tr><td><p>Altair Grid Engine&#0153 is the leading implementation of the popular Grid Engine workload scheduling and
+                                         management system used by thousands of customers around the world. Altair Grid Engine helps organizations 
+                                         optimize throughput and performance, share resources more effectively, and improve return on investment (ROI) for a wide 
                                          variety of applications.</p> </td></tr> 
                                          <tr> <td> <p>&nbsp;</p> </td></tr> 
                                          <tr><td><big><b>Let's get started  </big> </b></td></tr>   
-                                         <tr><td> <p> <a href="http://www.univa.com/about/contact/index-ms.php" > Contact us to get started.</a> 
-                                            We can discuss your applications, answer any Grid Engine questions, and explain commercial licensing 
-                                            options fon-premise and Azure CycleCloud resident clusters. </p></td></tr> 
+                                         <tr><td> <p> <a href="https://www.altair.com/contact-us/?utm_campaign=CO-HPC-Cloud&utm_source=microsoft.com&utm_medium=apa-partner&utm_content=altair-grid-engine-promotion" > Contact us to get started.</a> 
+                                            We can discuss your applications, answer any Altair Grid Engine questions, and explain commercial licensing 
+                                            options for on-premises and Azure CycleCloud resident clusters. </p></td></tr> 
                                          <tr><td> <p>&nbsp;</p> </td></tr>  <tr><td><big><b>Optimized for Azure CycleCloud </big> </b></td></tr> 
-                                         <tr><td><p> Univa Grid Engine provides essential cloud-friendly features not found in open-source Grid 
+                                         <tr><td><p> Altair Grid Engine provides essential cloud-friendly features not found in open-source Grid 
                                             Engine that help improve workload throughput and simplify management in Azure CycleCloud while 
-                                            providing full compatibility with existing Grid Engine integrations. </p></td></tr> 
+                                            providing full compatibility with existing Altair Grid Engine integrations. </p></td></tr> 
                                          <tr><td> <p>&nbsp;</p> </td></tr> 
-                                         <tr><td><p> <a href="http://www.univa.com/resources/wp-univa-grid-engine.php"> Published benchmarks </a> 
-                                            demonstrate that Univa Grid Engine is on average twice as fast as open-source Grid Engine and 
-                                            delivers almost 10x the performance for specific workloads types and scheduling problems. </p></td></tr> 
-                                         <tr><td> <p>&nbsp;</p> </td></tr> 
-                                         <tr><td><p> With Univa Grid Engine, organizations can get work done faster, use resources more efficiently, 
+                                         <tr><td><p> With Altair Grid Engine, organizations can get work done faster, use resources more efficiently, 
                                             and in some cases, reduce cloud costs by shortening the time that clusters are deployed. </p></td></tr> 
-                                         <tr><td><p> Unique Univa Grid Engine features include: <ul> 
+                                         <tr><td><p> Unique Altair Grid Engine features include: <ul> 
                                             <li>Enhanced scalability throughput</li>
                                             <li>Advanced container support</li>
-                                            <li>GPU-aware scheduling</li></ul>
-                                            <ul><li>Dynamic cluster re-configuration</li>
+                                            <li>GPU-aware scheduling</li>
+                                            <li>Dynamic cluster re-configuration</li>
                                             <li>Simplified troubleshooting</li>
                                             <li>Python SDK / REST API for simplified automation </li>
                                             <li>Job classes for simplified application management</li>
                                             <li>Rich scheduling policies</li></ul></p>  </td></tr>
                                          <tr><td> <p>&nbsp;</p> </td></tr> 
-                                         <tr><td> <p> <big><b>Additional Univa Grid Engine Resources: </big> </b></p></td></tr> 
-                                         <tr><td><ul><li><a href="http://www.univa.com/about/contact/index-ms.php"> Inquire about Univa Grid Engine licensing </li>
-                                            <li><a href="http://www.unicom/products/">Univa Grid Engine Product Page </li>
-                                            <li><a href="http://www.univa.com/resources/files/gridengine.pdf">Univa Grid Engine Datasheet </li>
-                                            <li><a href="http://www.univa.com/resources/releases.php">Univa Grid Engine Development and Release Activity </li></ul> </td></tr></table>'''
+                                         <tr><td> <p> <big><b>Additional Altair Grid Engine&#0153 Resources: </big> </b></p></td></tr> 
+                                         <tr><td><ul>
+                                            <li><a href="https://www.altair.com/grid-engine/">Altair Grid Engine Product Page </li>
+                                            <li><a href="https://www.altair.com/resource/altair-grid-engine-for-enterprise-class-scheduling-and-optimization">Altair Grid Engine Datasheet </li>
+                                            <li><a href="https://www.altair.com/resourcelibrary/">Altair Development and Release Activity </li></ul> </td></tr></table>'''
 
         [[[parameter termsnotice]]]
         HideLabel = true
         Config.Plugin = pico.widget.HtmlTemplateWidget
-        Config.Template = '''<table> <tr><td> By using this cluster, you are agreeing to the terms of Univa. </td></tr> 
+        Config.Template = '''<table> <tr><td> By using this cluster, you are agreeing to the terms of Altair. </td></tr> 
             <tr><td> <i> TERM SOFTWARE LICENSE AGREEMENT</i> </td></tr> 
             <tr><td> <a href="https://www.univa.com/resources/files/univa_software_license_agreement.pdf" target="_blank"> 
                 Full Terms and Conditions </a></td></tr>'''
+        Conditions.Hidden = true
 
         [[[parameter HasAccepted]]]
         #HideLabel = true
@@ -223,11 +219,12 @@ Order = 1
         Required = true
         
         [[[parameter AcceptTerms]]]
-        #HideLabel = true
-        DefaultValue = false
+        HideLabel = true
+        DefaultValue = true
         Widget.Plugin = pico.form.BooleanCheckBox
-        Widget.Label = I Agree to Univa terms
+        Widget.Label = I Agree to Altair terms
         Widget.FalseValue := undefined
+        Conditions.Hidden = true
 
 
 [parameters Required Settings]
@@ -246,7 +243,7 @@ Order = 10
         Label = Scheduler VM Type
         Description = The VM type for scheduler and shared filer.
         ParameterType = Cloud.MachineType
-        DefaultValue = Standard_D12_v2
+        DefaultValue = Standard_D4s_v3
 
         [[[parameter HPCMachineType]]]
         Label = HPC VM Type
@@ -504,15 +501,15 @@ Order = 20
         Config.Label = Access execute nodes from the Internet
         Conditions.Excluded := UsePublicNetwork isnt true
 
-    [[parameters Univa Grid Engine]]
-    Description = Univa Version and Install
+    [[parameters Altair Grid Engine]]
+    Description = Altair Version and Install
 
         [[[parameter BYOL]]]
         Label = Bring Your Own
         Description = I've uploaded installers to Storage Account
         DefaultValue = false
         ParameterType = Boolean
-        Config.Label = I'm providing the Univa installer
+        Config.Label = I'm providing the Altair installer
 
         [[[parameter GEVersion]]]
         Label = GridEngine Version
