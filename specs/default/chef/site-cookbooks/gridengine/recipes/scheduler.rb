@@ -519,7 +519,8 @@ bash 'setup cyclecloud-gridengine' do
                                --username     #{node[:cyclecloud][:config][:username]} \
                                --password     #{node[:cyclecloud][:config][:password]} \
                                --url          #{node[:cyclecloud][:config][:web_server]} \
-                               --relevant-complexes #{relevant_complexes_str}
+                               --relevant-complexes #{relevant_complexes_str} \
+                               --idle-timeout #{node[:gridengine][:idle_timeout]}
 
   touch #{node[:cyclecloud][:bootstrap]}/gridenginevenv.installed
   EOH
