@@ -3,6 +3,8 @@ import io
 import json
 import os
 import sys
+import tarfile
+import time
 import typing
 from argparse import ArgumentParser
 from typing import Any, Callable, Dict, Iterable, List, Optional, TextIO, Tuple
@@ -225,6 +227,80 @@ def validate_func(config: Dict) -> None:
 
     if failure:
         sys.exit(1)
+
+
+def create_support_archive(config: Dict, archive: str) -> None:
+    ge_env = environment.from_qconf(config)
+
+    tf = tarfile.TarFile.gzopen(archive, "w")
+
+    def _add(cmd: List[str], name: str) -> None:
+        contents = ge_env.qbin.qconf(cmd)
+        _add_contents(contents, name)
+
+    def _add_contents(contents: str, name: str) -> None:
+        tarinfo = tarfile.TarInfo("gridengine-support/" + name)
+        tarinfo.size = len(contents)
+        tarinfo.mtime = time.time()
+        fr = io.BytesIO(contents.encode())
+        tf.addfile(tarinfo, fr)
+
+    # get our queue definitions
+    for qname in ge_env.queues:
+        _add(["-sq", qname], "queue_{}".format(qname))
+
+    # get our parallel env definitions
+    for pe_name in ge_env.pes:
+        _add(["-sp", pe_name], "pe_{}".format(pe_name))
+
+    # get a list of hostgroups. Actual definition of hgs is immaterial
+    _add(["-shgrpl"], "hostgroups")
+    # dump out the complexes
+    _add(["-sc"], "complexes")
+
+    config_no_creds = dict(config)
+    config_no_creds["password"] = ""
+    config_no_creds["cluster_name"] = ""
+    config_no_creds["username"] = ""
+    config_no_creds["url"] = ""
+    _add_contents(json.dumps(config_no_creds, indent=2), "autoscale.json")
+
+    install_logs = os.path.join(
+        os.getenv("SGE_ROOT"), os.getenv("SGE_CELL"), "common/install_logs"
+    )
+    if os.path.exists(install_logs):
+        for fil in os.listdir(install_logs):
+            path = os.path.join(install_logs, fil)
+            with open(path) as fr:
+                _add_contents(fr.read(), fil)
+
+    # e.g. /sched/sge/sge-2011.11/default/spool/qmaster/messages
+    spool_dir = os.path.join(os.getenv("SGE_ROOT"), os.getenv("SGE_CELL"), "spool")
+    if os.path.exists(spool_dir):
+        for hostname in os.listdir(spool_dir):
+            messages_path = os.path.join(spool_dir, hostname, "messages")
+            if os.path.exists(messages_path):
+                with open(messages_path) as fr:
+                    _add_contents(fr.read(), "messages_{}".format(hostname))
+
+    # may not exist on self-installs
+    chef_client_log = "/opt/cycle/jetpack/logs/chef-client.log"
+    if os.path.exists(chef_client_log):
+        with open(chef_client_log) as fr:
+            _add_contents(fr.read(), "chef-client.log")
+
+    # find autoscale.log and autoscale.log.1-5
+    for handler in logging.getLogger().handlers:
+        if hasattr(handler, "baseFilename"):
+            base_filename = getattr(handler, "baseFilename")
+            file_names = [base_filename] + [
+                base_filename + ".{}".format(n) for n in range(1, 6)
+            ]
+            for fname in file_names:
+                if os.path.exists(fname):
+                    with open(fname) as fr:
+                        _add_contents(fr.read(), os.path.basename(fname))
+    tf.close()
 
 
 def demand(
@@ -749,6 +825,11 @@ def main(argv: Iterable[str] = None) -> None:
 
     add_parser("jobs", jobs)
     add_parser("jobs_and_nodes", jobs_and_nodes)
+
+    support_archive_parser = add_parser("support_archive", create_support_archive)
+    support_archive_parser.add_argument(
+        "--archive", "-a", default="gridengine_support-{}.tar.gz".format(time.time())
+    )
 
     join_cluster_parser = add_parser("join_cluster", join_cluster)
     join_cluster_parser.add_argument("-H", "--hostnames", type=str_list)
