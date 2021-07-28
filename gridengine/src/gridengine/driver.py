@@ -854,8 +854,8 @@ def _get_jobs_and_nodes(
     # -s  pr -- show only pending or running
     # -f -- full output. Ambiguous what this means, but in this case it includes host information so that
     # we can get one consistent view (i.e. not split between two calls, introducing a race condition)
-    # qstat -xml -s prs -r -f -ext -explain c -F
-    cmd = ["-xml", "-s", "prs", "-r", "-f", "-ext", "-explain", "c", "-F"]
+    # qstat -xml -s prs -r -f -ext -explain c -u * -F
+    cmd = ["-xml", "-s", "prs", "-r", "-f", "-ext", "-explain", "c", "-u", "*", "-F"]
     relevant_complexes = (
         autoscale_config.get("gridengine", {}).get("relevant_complexes") or []
     )
