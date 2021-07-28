@@ -234,9 +234,13 @@ def validate_func(config: Dict) -> None:
 
 
 def create_support_archive(config: Dict, archive: str) -> None:
+    """
+    Creates an archive with most logs and configurations required when requesting support.
+    """
     ge_env = environment.from_qconf(config)
 
-    tf = tarfile.TarFile.gzopen(archive, "w")
+    # for some reason mypy doesn't see gzopen
+    tf = tarfile.TarFile.gzopen(archive, "w")  # type: ignore
 
     def _add(cmd: List[str], name: str) -> None:
         contents = ge_env.qbin.qconf(cmd)
@@ -245,7 +249,7 @@ def create_support_archive(config: Dict, archive: str) -> None:
     def _add_contents(contents: str, name: str) -> None:
         tarinfo = tarfile.TarInfo("gridengine-support/" + name)
         tarinfo.size = len(contents)
-        tarinfo.mtime = time.time()
+        tarinfo.mtime = int(time.time())
         fr = io.BytesIO(contents.encode())
         tf.addfile(tarinfo, fr)
 
@@ -270,7 +274,7 @@ def create_support_archive(config: Dict, archive: str) -> None:
     _add_contents(json.dumps(config_no_creds, indent=2), "autoscale.json")
 
     install_logs = os.path.join(
-        os.getenv("SGE_ROOT"), os.getenv("SGE_CELL"), "common/install_logs"
+        os.getenv("SGE_ROOT", ""), os.getenv("SGE_CELL", ""), "common/install_logs"
     )
     if os.path.exists(install_logs):
         for fil in os.listdir(install_logs):
@@ -279,7 +283,9 @@ def create_support_archive(config: Dict, archive: str) -> None:
                 _add_contents(fr.read(), fil)
 
     # e.g. /sched/sge/sge-2011.11/default/spool/qmaster/messages
-    spool_dir = os.path.join(os.getenv("SGE_ROOT"), os.getenv("SGE_CELL"), "spool")
+    spool_dir = os.path.join(
+        os.getenv("SGE_ROOT", ""), os.getenv("SGE_CELL", ""), "spool"
+    )
     if os.path.exists(spool_dir):
         for hostname in os.listdir(spool_dir):
             messages_path = os.path.join(spool_dir, hostname, "messages")
@@ -305,6 +311,7 @@ def create_support_archive(config: Dict, archive: str) -> None:
                     with open(fname) as fr:
                         _add_contents(fr.read(), os.path.basename(fname))
     tf.close()
+    print("Wrote archive to", archive)
 
 
 def demand(

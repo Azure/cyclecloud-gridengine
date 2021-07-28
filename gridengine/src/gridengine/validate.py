@@ -290,7 +290,7 @@ def validate_scheduler_has_no_slots(
             )
             failure = True
 
-        if slots > 0:
+        elif slots > 0:
             warn(
                 "The scheduler %s has slots > 0. While not prohibited, this is not recommended as jobs may inadvertently run on the scheduler.",
                 sname,
