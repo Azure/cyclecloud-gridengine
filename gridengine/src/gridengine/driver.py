@@ -716,9 +716,10 @@ license_oversubscription NONE"""
         for dr in config["default_resources"]:
             c = self.ge_env.unfiltered_complexes.get(dr.get("name"))
             new_default_resources.append(dr)
-            assert c, "%s %s" % (dr, self.ge_env.complexes)
+
             if not c:
                 continue
+
             if c.name == c.shortcut:
                 continue
 

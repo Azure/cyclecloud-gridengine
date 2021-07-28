@@ -256,3 +256,15 @@ def validate_default_hostgroups(
                 failure = True
 
     return not failure
+
+
+def validate_default_resources(
+    config: Dict, ge_env: GridEngineEnvironment, warn: WarnFunction
+) -> None:
+    for dr in config["default_resources"]:
+        c = ge_env.unfiltered_complexes.get(dr.get("name"))
+        if not c:
+            warn(
+                "Default resource %s does not have an equivalent complex defined. It will be ignored.",
+                dr.get("name"),
+            )

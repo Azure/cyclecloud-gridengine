@@ -70,7 +70,8 @@ class GridEngineQueue:
 
                 if pe_name not in pes:
                     logging.warning(
-                        "Parallel environment %s was not found - %s. Skipping",
+                        'Unknown parallel environment %s defined in {"gridengine": {"pes": {"%s": {}}}} - %s. Skipping',
+                        pe_name,
                         pe_name,
                         list(pes.keys()),
                     )
