@@ -10,7 +10,7 @@ def setup_module() -> None:
 
 
 def test_add_remove_nodes() -> None:
-    scheduler = GridEngineScheduler({})
+    scheduler = GridEngineScheduler({}, "localhost")
     qbin = QBinImpl(is_uge=True)
     ge_env = GridEngineEnvironment(scheduler, qbin=qbin)
 

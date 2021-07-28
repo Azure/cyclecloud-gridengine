@@ -7,7 +7,8 @@ from gridengine.qbin import QBin
 
 
 class GridEngineScheduler:
-    def __init__(self, config: Dict) -> None:
+    def __init__(self, config: Dict, hostname: str = "localhost") -> None:
+        self.hostname = hostname
         self.__config = config
         self.__sort_by_seqno = False
         # GE < 8.6 will have this defined
@@ -38,4 +39,5 @@ class GridEngineScheduler:
 def read_scheduler(qbin: QBin) -> GridEngineScheduler:
     lines = qbin.qconf(["-ssconf"]).splitlines()
     sched_config = util.parse_ge_config(lines)
-    return GridEngineScheduler(sched_config)
+    hostname = qbin.qconf(["-sss"]).splitlines()[0]
+    return GridEngineScheduler(sched_config, hostname)

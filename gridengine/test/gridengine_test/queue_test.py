@@ -47,7 +47,7 @@ def test_hostlist() -> None:
 
     complex_values = {None: {"pcpu": 2}, "@complexvalueshg": {"pcpu": 1}}
 
-    scheduler = GridEngineScheduler({})
+    scheduler = GridEngineScheduler({}, "localhost")
 
     queue = GridEngineQueue(
         queue_config, scheduler, pes, unbound_hostgroups, complex_values

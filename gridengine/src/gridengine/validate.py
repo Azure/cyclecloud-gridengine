@@ -27,6 +27,7 @@ def validate_queue_has_hosts(
 ) -> bool:
     # ensure that there is at least one host for each queue.
     empty_hostgroups = []
+
     for hostgroup in queue.hostlist:
         if hostgroup == "NONE":
             continue
@@ -86,14 +87,14 @@ def validate_hg_intersections(
                     bucket,
                     ",".join(matches),
                 )
-    return failure
+    return not failure
 
 
 def validate_ht_hostgroup(
     queue: GridEngineQueue, ge_env: GridEngineEnvironment, warn_function: WarnFunction
 ) -> bool:
     warn = warn_function
-
+    failure = False
     ht_groups = queue.get_hostgroups_for_ht()
     if len(ht_groups) == 1:
         return True
@@ -112,7 +113,7 @@ def validate_ht_hostgroup(
         else:
             warn("  Set queue_sort_method to seqno in qconf -msconf to enable")
         warn("  sorting by seq_no to deal with this ambiguity.")
-        return False
+        failure = True
 
     warn(
         "Queue %s has no hostgroup in its hostlist that is not associated "
@@ -138,7 +139,7 @@ def validate_ht_hostgroup(
                     '             {"gridengine": {"pes": {"%s": {"requires_placement_groups": false}}}}',
                     pe.name,
                 )
-    return False
+    return not failure
 
 
 def validate_pe_hostgroups(queue: GridEngineQueue, warn_function: WarnFunction) -> bool:
@@ -260,11 +261,45 @@ def validate_default_hostgroups(
 
 def validate_default_resources(
     config: Dict, ge_env: GridEngineEnvironment, warn: WarnFunction
-) -> None:
+) -> bool:
+    failure = False
     for dr in config["default_resources"]:
         c = ge_env.unfiltered_complexes.get(dr.get("name"))
         if not c:
+            failure = True
             warn(
                 "Default resource %s does not have an equivalent complex defined. It will be ignored.",
                 dr.get("name"),
             )
+    return not failure
+
+
+def validate_scheduler_has_no_slots(
+    config: Dict, ge_env: GridEngineEnvironment, warn: WarnFunction
+) -> bool:
+    sname = ge_env.scheduler.hostname.lower()
+    failure = False
+    for qname, queue in ge_env.queues.items():
+        slots = queue.slots.get(sname, queue.slots.get(None))
+        if slots is None:
+            warn("Could not determine the number of slots for scheduler %s.", sname)
+            warn(
+                "Please explicitly set the slots to 0 by adding [%s=0] via qconf -mq %s",
+                sname,
+                qname,
+            )
+            failure = True
+
+        if slots > 0:
+            warn(
+                "The scheduler %s has slots > 0. While not prohibited, this is not recommended as jobs may inadvertently run on the scheduler.",
+                sname,
+            )
+            warn(
+                "To fix this you can set the slots to 0 by adding an entry '[%s=0]' via 'qconf -mq %s'",
+                sname,
+                qname,
+            )
+            failure = True
+
+    return not failure

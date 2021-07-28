@@ -442,7 +442,7 @@ def common_cluster(
 def common_ge_env(
     previous_dcalc: Optional[DemandCalculator] = None, is_uge: bool = True,
 ) -> GridEngineEnvironment:
-    scheduler = GridEngineScheduler({})
+    scheduler = GridEngineScheduler({}, "localhost")
     existing_nodes = []
     if previous_dcalc:
         existing_nodes = list(previous_dcalc.node_mgr.cluster_bindings.nodes.values())

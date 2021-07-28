@@ -213,19 +213,23 @@ def validate_func(config: Dict) -> None:
     ge_env = environment.from_qconf(config)
     dcalc = autoscaler.new_demand_calculator(config, ge_env=ge_env)
     queue: GridEngineQueue
-    failure = False
-    failure = (
-        validate.validate_hg_intersections(ge_env, dcalc.node_mgr, warn) or failure
+    success = True
+    success = (
+        validate.validate_hg_intersections(ge_env, dcalc.node_mgr, warn) and success
     )
-    failure = validate.validate_nodes(config, dcalc, warn) or failure
+    success = validate.validate_nodes(config, dcalc, warn) and success
+
     for qname, queue in ge_env.queues.items():
-        failure = validate.validate_queue_has_hosts(queue, ge_env.qbin, warn) or failure
-        failure = validate.validate_ht_hostgroup(queue, ge_env, warn) or failure
-        failure = validate.validate_pe_hostgroups(queue, warn) or failure
+        success = (
+            validate.validate_queue_has_hosts(queue, ge_env.qbin, warn) and success
+        )
+        success = validate.validate_ht_hostgroup(queue, ge_env, warn) and success
+        success = validate.validate_pe_hostgroups(queue, warn) and success
 
-    failure = validate.validate_default_hostgroups(config, ge_env, warn) or failure
+    success = validate.validate_default_hostgroups(config, ge_env, warn) and success
+    success = validate.validate_scheduler_has_no_slots(config, ge_env, warn) and success
 
-    if failure:
+    if not success:
         sys.exit(1)
 
 
