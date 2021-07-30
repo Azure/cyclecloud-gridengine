@@ -44,6 +44,3 @@ default[:gridengine][:user][:uid] = 536
 default[:gridengine][:user][:gid] = node[:gridengine][:group][:gid]
 
 default[:gridengine][:max_group_backlog] = 1
-
-# List of installed applications for use in SubmitOnce routing
-default[:submitonce][:applications] = nil

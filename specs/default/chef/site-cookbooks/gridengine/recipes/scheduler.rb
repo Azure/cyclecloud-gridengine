@@ -448,17 +448,6 @@ end
 # Pull in the Jetpack LWRP
 include_recipe 'jetpack'
 
-# Notify CycleCloud to configure GridEngine monitoring on each converge
-applications = ''
-if !node[:submitonce][:applications].nil? && !node[:submitonce][:applications].empty?
-  if node[:submitonce][:applications].is_a?(Array)
-    app_list = node[:submitonce][:applications].join(',')
-  else
-    app_list = node[:submitonce][:applications]
-  end
-  applications = "\"applications\": \"#{app_list}\""
-end
-
 monitoring_config = "#{node['cyclecloud']['home']}/config/service.d/gridengine.json"
 file monitoring_config do
   content <<-EOH
@@ -468,8 +457,7 @@ file monitoring_config do
     "hostname": "#{node[:cyclecloud][:instance][:public_hostname]}",
     "ports": {"ssh": 22},
     "cellname": "#{gridenginecell}",
-    "gridengineroot": "#{node[:gridengine][:root]}",
-    "submitonce": {#{applications}}
+    "gridengineroot": "#{node[:gridengine][:root]}"
   }
   EOH
   mode 750
