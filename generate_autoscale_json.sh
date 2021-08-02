@@ -97,7 +97,7 @@ if [ $? == 0 ]; then
     hostgroup_constraints="$hostgroup_constraints --hostgroup-constraint @cyclempi={\"node.colocated\":true}"
 else
     echo Hostgroup @cyclempi does not exist. Creating a default_hostgroup that you can edit manually. See @enter_default_mpi_hostgroup >&2
-    default_hostgroups="$default_hostgroups --default-hostgroups {\"select\":{\"node.colocated\":true},\"hostgroups\":[\"@enter_default_mpi_hostgroup\"]}"
+    default_hostgroups="$default_hostgroups --default-hostgroups {\"select\":{\"node.colocated\":false},\"hostgroups\":[\"@enter_default_mpi_hostgroup\"]}"
 fi
 
 qconf -shgrp @cyclehtc > /dev/null 2>&1
