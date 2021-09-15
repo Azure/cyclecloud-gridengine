@@ -102,7 +102,7 @@ fi
 
 qconf -shgrp @cyclehtc > /dev/null 2>&1
 if [ $? == 0 ]; then
-    default_hostgroups="$default_hostgroups --default-hostgroups {\"select\":{\"node.colocated\":true},\"hostgroups\":[\"@cyclehtc\"]}"
+    default_hostgroups="$default_hostgroups --default-hostgroups {\"select\":{\"node.colocated\":false},\"hostgroups\":[\"@cyclehtc\"]}"
     hostgroup_constraints="$hostgroup_constraints --hostgroup-constraint @cyclehtc={\"node.colocated\":false}"
 else
     echo Hostgroup @cyclehtc does not exist. Creating a default_hostgroup that you can edit manually. Defaulting to @allhosts >&2
