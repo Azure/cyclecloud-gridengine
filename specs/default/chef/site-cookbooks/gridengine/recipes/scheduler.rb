@@ -12,7 +12,7 @@ directory "/opt/cycle/gridengine"
 
 slot_type = node[:gridengine][:slot_type] || "scheduler"
 
-myplatform=node[:platform]
+myplatform=node[:platform_family]
 
 package 'Install binutils' do
   package_name 'binutils'
@@ -27,7 +27,7 @@ when 'ubuntu'
   package 'Install libnuma' do  
     package_name 'libnuma-dev'
   end
-when 'centos'
+when 'rhel'
   # Install EPEL for jemalloc
   package 'epel-release'
 
