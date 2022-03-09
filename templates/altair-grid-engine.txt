@@ -22,6 +22,7 @@ Autoscale = $Autoscale
         [[[configuration]]]
         gridengine.use_external_download = ${ifThenElse(BYOL, false, true)}
         gridengine.demo_base_url = ""
+
         gridengine.make = ge 
         gridengine.version = $GEVersion 
         gridengine.root = $GERoot
@@ -442,23 +443,23 @@ Order = 20
         [[[parameter SchedulerImageName]]]
         Label = Scheduler Base OS
         ParameterType = Cloud.Image
-        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8"}
+        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8", "almalinux8"}
         Config.OS = linux
-        DefaultValue = cycle.image.centos7
+        DefaultValue = almalinux8
 
         [[[parameter HPCImageName]]]
         Label = HPC Base OS
         ParameterType = Cloud.Image
-        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8"}
+        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8", "almalinux8"}
         Config.OS = linux
-        DefaultValue = cycle.image.centos7
+        DefaultValue = almalinux8
 
         [[[parameter HTCImageName]]]
         Label = HTC Base OS
         ParameterType = Cloud.Image
-        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8"}
+        Config.Filter := Package in {"cycle.image.centos7", "cycle.image.centos8", "almalinux8"}
         Config.OS = linux
-        DefaultValue = cycle.image.centos7
+        DefaultValue = almalinux8
 
         [[[parameter SchedulerClusterInitSpecs]]]
         Label = Scheduler Cluster-Init
