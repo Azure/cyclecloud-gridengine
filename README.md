@@ -210,7 +210,7 @@ where `physical_cpu` is the complex name:
 ]
 ```
 
-Ordering is also important when you want a particular behavior for a specific attribute, like a making sure
+Ordering is also important when you want a particular behavior for a specific attribute, like making sure
 only one slot will be allocate per node on a selected nodearray:
 
 ```json
