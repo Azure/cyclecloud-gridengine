@@ -1,8 +1,8 @@
 #
 # Cookbook Name:: gridengine
-# Recipe:: sgeexec
+# Recipe:: execute
 #
-
+include_recipe "gridengine::_updatehostname"
 include_recipe "gridengine::sgefs" if node[:gridengine][:managed_fs]
 include_recipe "gridengine::submitter"
 
@@ -136,16 +136,16 @@ execute "update_hostname" do
 end
 
 # this block prevents "bash[install_gridengine_execd]" from running until the hostname is authorized
-ruby_block "gridengine exec authorized?" do
+ruby_block "gridengine exec #{node[:cyclecloud][:instance][:hostname]} authorized?" do
   block do
     # use . here as /bin/sh may not have source defined. (ubuntu)
     cmd =  Mixlib::ShellOut.new(
-      ". /etc/profile.d/sgesettings.sh && qconf -se #{node[:cyclecloud][:instance][:hostname]} > /dev/null"
+      ". /etc/profile.d/sgesettings.sh 2>> /tmp/authorized-hostname.log >> /tmp/authorized-hostname.log && qconf -se #{node[:cyclecloud][:instance][:hostname]} 2>> /tmp/authorized-hostname.log >> /tmp/authorized-hostname.log"
       ).run_command
       exit_code=cmd.exitstatus
     raise "gridengine node #{node[:cyclecloud][:instance][:hostname]} not authorized yet. Exit code #{exit_code}" unless cmd.exitstatus == 0
   end
-  retries 5
+  retries 2
   retry_delay 30
   notifies :run, "bash[install_gridengine_execd]", :delayed
 end
