@@ -52,7 +52,7 @@ echo INSTALL_PYTHON3=$INSTALL_PYTHON3
 echo INSTALL_VIRTUALENV=$INSTALL_VIRTUALENV
 echo VENV=$VENV
 
-export PATH=$(python -c '
+export PATH=$(python3 -c '
 import os
 paths = os.environ["PATH"].split(os.pathsep)
 cc_home = os.getenv("CYCLECLOUD_HOME", "/opt/cycle/jetpack")
