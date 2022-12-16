@@ -1,13 +1,15 @@
 import os
 import sys
+import time
 import typing
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from hpc.autoscale import hpclogging as logging
 from hpc.autoscale.job import demandcalculator as dcalclib
 from hpc.autoscale.job import demandprinter
 from hpc.autoscale.job.demand import DemandResult
 from hpc.autoscale.job.demandcalculator import DemandCalculator
+from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodehistory import NodeHistory, SQLiteNodeHistory
 from hpc.autoscale.node.nodemanager import new_node_manager
 from hpc.autoscale.results import DefaultContextHandler
@@ -30,6 +32,7 @@ def autoscale_grid_engine(
     ctx_handler: Optional[DefaultContextHandler] = None,
     node_history: Optional[NodeHistory] = None,
     dry_run: bool = False,
+    clock: Callable[[], float] = time.time,
 ) -> DemandResult:
     global _exit_code
 
@@ -75,8 +78,11 @@ def autoscale_grid_engine(
             if not ccnodeid or ccnodeid == cc_node.delayed_node_id.node_id:
                 if cc_node.state in ["Preparing", "Acquiring"]:
                     continue
+
+        # Sometimes a node will be fully converged but will still be shown as 'au' = alarm, unresponsive
+        # We will ignore this unless the node has been given its full boot_timeout.
         if "a" in state and "u" in state:
-            invalid_nodes.append(node)
+            _handle_alarm_node(config, clock, node, invalid_nodes)
 
     # nodes in error state must also be deleted
     nodes_to_delete = ge_driver.clean_hosts(invalid_nodes)
@@ -166,6 +172,25 @@ def autoscale_grid_engine(
     print_demand(config, demand_result, log=not dry_run)
 
     return demand_result
+
+
+def _handle_alarm_node(
+    config: Dict,
+    clock: Callable[[], float],
+    node: "Node",
+    invalid_nodes_out: List["Node"],
+) -> None:
+    now = clock()
+    omega = config["boot_timeout"] + node.create_time_unix
+    if now > omega:
+        invalid_nodes_out.append(node)
+    else:
+        logging.warning(
+            f"Node {node.name} is in an alarm state ('au') but it has not been up longer than its boot_timeout."
+        )
+        logging.warning(
+            f"If {node.name} is still in an alarm state in {omega - now} seconds, it will be removed and shutdown."
+        )
 
 
 def new_demand_calculator(

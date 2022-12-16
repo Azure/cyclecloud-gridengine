@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from hpc.autoscale import hpclogging
 from hpc.autoscale.ccbindings.mock import MockClusterBinding
@@ -314,6 +314,31 @@ def test_fill_up_and_round_robin() -> None:
     )
 
 
+def test_handle_alarm_node() -> None:
+    class MockNode:
+        def __init__(self, name: str, create_time_unix: float) -> None:
+            self.name = name
+            self.create_time_unix = create_time_unix
+
+        def __str__(self) -> str:
+            return f"Node({self.name})"
+
+    def make_clock(t: float) -> Callable[[], float]:
+        return lambda: t
+
+    node = MockNode("htc-1", 100)
+    config = {"boot_timeout": 1800}
+
+    def run_test(now: float, invalid: bool) -> None:
+        invalid_nodes_out = []
+        autoscaler._handle_alarm_node(config, make_clock(now), node, invalid_nodes_out)
+        assert invalid == bool(invalid_nodes_out)
+
+    run_test(100, False)
+    run_test(1899, False)
+    run_test(1901, True)
+
+
 def _job(qsub_cmd: str, job_id: int) -> Job:
     ge_env = common_ge_env()
     qsub = mock_driver.MockQsub(ge_env)
@@ -360,7 +385,7 @@ def common_cluster_test(
     qsub_commands: List[str],
     pg_counts: Optional[Dict[str, int]] = None,
     previous_dcalc: Optional[DemandCalculator] = None,
-    **array_counts: int
+    **array_counts: int,
 ) -> DemandCalculator:
     pg_counts = pg_counts or {}
     dcalc = common_cluster(qsub_commands, previous_dcalc)
