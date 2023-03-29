@@ -244,13 +244,13 @@ Order = 10
         Label = Scheduler VM Type
         Description = The VM type for scheduler and shared filer.
         ParameterType = Cloud.MachineType
-        DefaultValue = Standard_D4s_v3
+        DefaultValue = Standard_D4ads_v5
 
         [[[parameter HPCMachineType]]]
         Label = HPC VM Type
         Description = The VM type for HPC nodes
         ParameterType = Cloud.MachineType
-        DefaultValue = Standard_F4
+        DefaultValue = Standard_F4s_v2
         Config.Multiselect = true
 
         [[[parameter HTCMachineType]]]
