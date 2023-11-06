@@ -28,6 +28,7 @@ from hpc.autoscale.node.constraints import (
 from hpc.autoscale.node.node import Node
 from hpc.autoscale.node.nodemanager import NodeManager
 from hpc.autoscale.results import EarlyBailoutResult, SatisfiedResult
+from hpc.autoscale.util import partition
 
 from gridengine import environment as envlib
 from gridengine import validate as validatelib
@@ -182,13 +183,13 @@ affinity    0.000000"""
         if self.read_only:
             return []
 
-        to_shutdown: List[SchedulerNode] = []
+        drained: List[SchedulerNode] = []
         for node in unmatched_nodes:
             if node.hostname:
                 wc_queue_list_expr = "*@{}".format(node.hostname)
                 try:
                     self.ge_env.qbin.qmod(["-d", wc_queue_list_expr])
-                    to_shutdown.append(node)
+                    drained.append(node)
                 except CalledProcessError as e:
                     msg = "invalid queue"
 
@@ -197,13 +198,40 @@ affinity    0.000000"""
                         logging.info(
                             "Ignoring failed qmod -d, as the hostname is no longer associated with a queue"
                         )
-                        to_shutdown.append(node)
+                        drained.append(node)
                     else:
                         logging.error(
                             "Could not drain %s: %s. Will not shutdown node. ",
                             node,
                             e.stdout.decode() if e.stdout else str(e),
                         )
+        # let's query the nodes again. If they are running a job now, 
+        # we can ignore them and we will safely undrain them the next 
+        # autoscale iteration.
+        to_shutdown = []
+        _, updated_nodes = self.get_jobs_and_nodes()
+        by_hostname_updated = partition(updated_nodes, lambda n: n.hostname)
+        for node in drained:
+            update_node_sublist = by_hostname_updated.get(node.hostname)
+            if not update_node_sublist:
+                to_shutdown.append(node)
+                continue
+            
+            if any([_is_node_busy(n) for n in update_node_sublist]):
+                logging.info(
+                    "%s has jobs running on it, will not shutdown.", node
+                )
+                continue
+
+            if any([not _is_node_disabled(n) for n in update_node_sublist]):
+                logging.info(
+                    "%s is no longer disabled, will not shutdown.", node
+                )
+                continue
+            # OK - the node is still disabled and has no jobs running on it.
+            # we can safely shutdown the node.
+            to_shutdown.append(node)
+
         return to_shutdown
 
     def get_jobs_and_nodes(self) -> Tuple[List[Job], List[SchedulerNode]]:
@@ -380,9 +408,22 @@ affinity    0.000000"""
             n for n in nodes if n.exists and n.hostname and n.resources.get("ccnodeid")
         ]
 
-        for node in filtered:
+        # disabled nodes that need to be joined to the cluster
+        no_running_jobs = [n for n in filtered if not _is_node_busy(n)]
+        # disabled nodes that have running jobs should be re-enabled
+        has_running_jobs = [n for n in filtered if _is_node_busy(n)]
+
+        for node in no_running_jobs:
             if self._add_node_to_cluster(node, admin_hostnames, submit_hostnames):
                 ret.append(node)
+        
+        if has_running_jobs:
+            logging.info("Re-enabling queues for nodes with running jobs - %s",
+                        [n.hostname for n in has_running_jobs])
+
+            for node in has_running_jobs:
+                wc_queue_list_expr = f"*@{node.hostname}"
+                self.ge_env.qbin.qmod(["-e", wc_queue_list_expr])
         return ret
 
     def _add_node_to_cluster(
@@ -443,7 +484,8 @@ affinity    0.000000"""
         self, node: Node, submit_hostnames: List[str]
     ) -> bool:
         if node.hostname in submit_hostnames:
-            if "d" not in node.metadata.get("state", ""):
+            # nodes should join in a disabled state
+            if not _is_node_disabled(node):
                 return False
 
         if node.state == "Failed":
@@ -1652,3 +1694,21 @@ def _parse_tasks(expr: str) -> int:
     except Exception as e:
         logging.error("Could not parse expr %s: %s", expr, e)
         raise
+
+
+def _is_node_disabled(node: Node) -> bool:
+    # gridengine uses single letter state codes
+    # d = disabled ie. qmod -d
+    return "d" in (node.metadata.get("state") or "")
+
+
+def _is_node_busy(node: Node) -> bool:
+    # state will be defined once the node has joined the cluster
+    # so either the job is running or will be shortly.
+    return _is_node_assigned(node) and node.metadata.get("state")
+
+
+def _is_node_assigned(node: Node) -> bool:
+    # tells if a job has been assigned, but the node may not be
+    # part of the cluster yet.
+    return bool(node.assignments)
