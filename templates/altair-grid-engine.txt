@@ -133,6 +133,7 @@ Autoscale = $Autoscale
 
     Azure.MaxScalesetSize = $MaxScalesetSize
     AdditionalClusterInitSpecs = $HPCClusterInitSpecs
+    EnableNodeHealthChecks = $EnableNodeHealthChecks
 
 
         [[[configuration]]]
@@ -552,3 +553,13 @@ Order = 20
         [[[parameter GERemotePrefix]]]
         DefaultValue = aHR0cHM6Ly9maWxlcy51bml2YS5jb20vdWdlLzBiMzQ2NWExODA5ZmI3NjgwYTM2OTg2Y2NkMmE2MDEwLzguNi43LWRlbW8vP2lkPTU5MDc4NDgyMiZ1PW5vLXJlcGx5QG1pY3Jvc29mdC5jb20mZj0=
         Conditions.Hidden := true
+
+    [[parameters Node Health Checks]]
+    Description = "Section for configuring Node Health Checks"
+    Order = 12
+
+        [[[parameter EnableNodeHealthChecks]]]
+        Label = Enable NHC tests
+        DefaultValue = false
+        Widget.Plugin = pico.form.BooleanCheckBox
+        Widget.Label = Run Node Health Checks on startup
