@@ -1099,10 +1099,12 @@ def _parse_job(
     if job_state and IGNORE_STATES.intersection(set(job_state)):  # type: ignore
         return None
 
-    requested_queues = [str(x.text) for x in jijle.findall("hard_req_queue")]
+    full_qual_requested_queues = [str(x.text) for x in jijle.findall("hard_req_queue")]
 
-    if not requested_queues:
-        requested_queues = ["all.q"]
+    if not full_qual_requested_queues:
+        full_qual_requested_queues = ["all.q"]
+
+    requested_queues = [q.split("@")[0] for q in full_qual_requested_queues]
 
     requested_queues = [
         x for x in requested_queues if ge_env.queues[x].autoscale_enabled
