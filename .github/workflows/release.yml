@@ -23,7 +23,7 @@ jobs:
           source $GITHUB_WORKSPACE/.venv/bin/activate && python package.py;
       - name: Get the version
         id: get_version
-        run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/}
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       - name: Get SGE binaries
         id: get-sge-binaries
         run:
