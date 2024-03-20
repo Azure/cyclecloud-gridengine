@@ -58,7 +58,17 @@ nodename = node[:cyclecloud][:instance][:hostname]
 nodename_short = nodename.split(".")[0]
 
 gridengineroot = node[:gridengine][:root]     # /sched/ge/ge-8.2.0-demo
-gridenginecell = node[:gridengine][:cell] 
+gridenginecell = node[:gridengine][:cell]
+
+enable_selinux_file_permission_fixup_original = Chef::Config[:enable_selinux_file_permission_fixup]
+
+
+ruby_block "set enable_selinux_file_permission_fixup to false" do
+  block do
+    Chef::Config[:enable_selinux_file_permission_fixup] = false
+  end
+end
+
 
 directory gridengineroot do
   owner node[:gridengine][:user][:uid]
@@ -482,6 +492,13 @@ cookbook_file "/opt/cycle/gridengine/logging.conf" do
   mode '0644'
   action :create
   not_if {::File.exist?("#{node[:cyclecloud][:bootstrap]}/gridengine/logging.conf")}
+end
+
+
+ruby_block "restore enable_selinux_file_permission_fixup default" do
+  block do
+    Chef::Config[:enable_selinux_file_permission_fixup] = enable_selinux_file_permission_fixup_original
+  end
 end
 
 
