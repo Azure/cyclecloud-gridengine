@@ -1,7 +1,7 @@
 {
   "cluster_name": "sge2f",
   "username": "cyclecloud_access",
-  "password": "p90lIBgCjzZ8",
+  "password": "PASSWORD_HERE",
   "url": "https://172.155.155.2:9444",
   "logging": {
     "config_file": "/opt/cycle/jetpack/system/bootstrap/gridengine/logging.conf"
