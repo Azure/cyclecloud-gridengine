@@ -127,7 +127,7 @@ setup(
             "../notices",
         ]
     },
-    install_requires=["typing_extensions==3.7.4.3", "importlib-metadata<3.7", "zipp<3.7", "requests==2.24.0"],
+    install_requires=["typing_extensions==3.7.4.3", "importlib-metadata<3.7", "zipp<3.7"],
     tests_require=["pytest==3.2.3"],
     cmdclass={"test": PyTest, "format": Formatter, "types": TypeChecking},
     url="http://www.cyclecomputing.com",
