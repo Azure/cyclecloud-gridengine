@@ -4,7 +4,6 @@ run_list("role[scheduler]",
   "recipe[cshared::directories]",
   "recipe[cuser]",
   "recipe[cshared::server]",
-  "recipe[gridengine::scheduler]",
-  "recipe[cganglia::server]")
+  "recipe[gridengine::scheduler]")
 
 default_attributes "cyclecloud" => { "discoverable" => true }

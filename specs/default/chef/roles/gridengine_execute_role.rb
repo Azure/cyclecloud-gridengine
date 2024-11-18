@@ -3,5 +3,4 @@ description "SGE Client Role"
 run_list("recipe[cyclecloud::_hosts]",
   "recipe[cshared::client]",
   "recipe[cuser]",
-  "recipe[gridengine::execute]",
-  "recipe[cganglia::client]")
+  "recipe[gridengine::execute]")

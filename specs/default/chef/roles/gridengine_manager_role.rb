@@ -9,5 +9,4 @@ name "sge_manager_role"
 description "SGE Manager Role"
 run_list("recipe[gridengine::master]",
   "recipe[cshared::client]",
-  "recipe[cuser]",
-  "recipe[cganglia::server]")
+  "recipe[cuser]")
