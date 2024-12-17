@@ -132,6 +132,9 @@ def execute() -> None:
         if fil.startswith("certifi-2019"):
             print("WARNING: Ignoring duplicate certifi {}".format(fil))
             continue
+        if "charset_normalizer" in fil:
+            print("WARNING: removing charset_normalizer")
+            continue
         path = os.path.join(build_dir, fil)
         _add("packages/" + fil, path)
 
