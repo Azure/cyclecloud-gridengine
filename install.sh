@@ -52,50 +52,54 @@ echo INSTALL_PYTHON3=$INSTALL_PYTHON3
 echo INSTALL_VIRTUALENV=$INSTALL_VIRTUALENV
 echo VENV=$VENV
 
-export PATH=$(python -c '
-import os
-paths = os.environ["PATH"].split(os.pathsep)
-cc_home = os.getenv("CYCLECLOUD_HOME", "/opt/cycle/jetpack")
-print(os.pathsep.join(
-    [p for p in paths if cc_home not in p]))')
+# DEPRECATED: For versions < 8.7.0: Remove any jetpack references from the path. 
+echo $PATH | sed -E -e 's/\/opt\/cycle\/jetpack\/[^:]*://g'
 
+# Require python3.8 - 3.12. Unfortunately the default python3 is 3.6 on alma 
+PYTHON_EXE=$(which python3.8 || which python3.9 || which python3.10 || which python3.11 || which python3.12 || which python3)
 
-echo $PATH > /tmp/debug_path.txt
-which python3 >> /tmp/debug_path.txt
-
-which python3 > /dev/null;
+# if it does not exist, install it if the user requested it and then set PYTHON_EXE.
 if [ $? != 0 ]; then
     if [ $INSTALL_PYTHON3 == 1 ]; then
         $INSTALL_CMD install -y python3 || exit 1
+        PYTHON_EXE=$(which python3)
     else
-        echo Please install python3 >&2;
+        echo Please install python3.8 or newer >&2;
         exit 1
     fi
 fi
 
-python3 -m pip 2>&1 1> /dev/null
+# Make sure that the python version is supported.
+PYTHON_VERSION=$($PYTHON_EXE --version | awk '{print $2}')
+$PYTHON_EXE -c 'import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)'
+if [ $? != 0 ]; then
+    echo "Python version $PYTHON_VERSION is not supported. Please install python3.8 or newer" >&2
+    exit 1
+fi
+
+$PYTHON_EXE -m pip 2>&1 1> /dev/null
 if [ $? != 0 ]; then
     if [ $INSTALL_PIP == 1 ]; then
-        $INSTALL_CMD install -y python3-pip || exit 1
+        $INSTALL_CMD install -y ${PYTHON_VERSION}-pip || exit 1
     else
-        echo Please install python3-pip >&2;
+        echo Please install ${PYTHON_VERSION}-pip >&2;
         exit 1
     fi
 fi
 
 
-python3 -m virtualenv --version 2>&1 > /dev/null
+$PYTHON_EXE -m virtualenv --version 2>&1 > /dev/null
 if [ $? != 0 ]; then
     if [ $INSTALL_VIRTUALENV ]; then
-        python3 -m pip install virtualenv || exit 1
+        $PYTHON_EXE -m pip install virtualenv || exit 1
     else
-        echo Please install virtualenv for python3 >&2
+        echo Please install virtualenv for $PYTHON_EXE >&2
         exit 1
     fi
 fi
 
 
-python3 -m virtualenv $VENV
+$PYTHON_EXE -m virtualenv $VENV
 source $VENV/bin/activate
 # not sure why but pip gets confused installing frozendict locally
 # if you don't install it first. It has no dependencies so this is safe.

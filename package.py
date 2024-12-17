@@ -17,9 +17,15 @@ CYCLECLOUD_API_VERSION = "8.0.1"
 def build_sdist() -> str:
     cmd = [sys.executable, "setup.py", "sdist"]
     check_call(cmd, cwd=os.path.abspath("gridengine"))
-    sdists = glob.glob("gridengine/dist/cyclecloud-gridengine-*.tar.gz")
+    # see below for more: cyclecloud*gridengine so we cover cyclecloud-gridengine and cyclecloud_gridengine
+    sdists = glob.glob("gridengine/dist/cyclecloud*gridengine-*.tar.gz")
     assert len(sdists) == 1, "Found %d sdist packages, expected 1" % len(sdists)
     path = sdists[0]
+    # at some point setuptools changed the name of the sdist package to use underscores instead of dashes.
+    if "/cyclecloud_gridengine-" in path:
+        fixed_path = path.replace("/cyclecloud_gridengine-", "/cyclecloud-gridengine-")
+        os.rename(path, fixed_path)
+        path = fixed_path
     fname = os.path.basename(path)
     dest = os.path.join("libs", fname)
     if os.path.exists(dest):
@@ -125,6 +131,9 @@ def execute() -> None:
     for fil in os.listdir(build_dir):
         if fil.startswith("certifi-2019"):
             print("WARNING: Ignoring duplicate certifi {}".format(fil))
+            continue
+        if "charset_normalizer" in fil:
+            print("WARNING: removing charset_normalizer")
             continue
         path = os.path.join(build_dir, fil)
         _add("packages/" + fil, path)
