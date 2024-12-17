@@ -52,16 +52,9 @@ echo INSTALL_PYTHON3=$INSTALL_PYTHON3
 echo INSTALL_VIRTUALENV=$INSTALL_VIRTUALENV
 echo VENV=$VENV
 
-export PATH=$(python -c '
-import os
-paths = os.environ["PATH"].split(os.pathsep)
-cc_home = os.getenv("CYCLECLOUD_HOME", "/opt/cycle/jetpack")
-print(os.pathsep.join(
-    [p for p in paths if cc_home not in p]))')
+# DEPRECATED: For versions < 8.7.0: Remove any jetpack references from the path. 
+echo $PATH | sed -E -e 's/\/opt\/cycle\/jetpack\/[^:]*://g'
 
-
-echo $PATH > /tmp/debug_path.txt
-which python3 >> /tmp/debug_path.txt
 
 which python3 > /dev/null;
 if [ $? != 0 ]; then
