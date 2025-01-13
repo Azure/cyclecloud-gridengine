@@ -6,4 +6,4 @@ description      "Installs/Configures gridengine"
 long_description IO.read(File.join(File.dirname(__FILE__), 'README.md'))
 version          "2.0.20"
 
-%w{ cuser cganglia cycle_server cshared cyclecloud }.each {|c| depends c }
+%w{ cuser cycle_server cshared cyclecloud }.each {|c| depends c }
