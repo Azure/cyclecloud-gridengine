@@ -61,7 +61,7 @@ PYTHON_EXE=$(which python3.8 || which python3.9 || which python3.10 || which pyt
 # if it does not exist, install it if the user requested it and then set PYTHON_EXE.
 if [ $? != 0 ]; then
     if [ $INSTALL_PYTHON3 == 1 ]; then
-        $INSTALL_CMD install -y python3 || exit 1
+        $INSTALL_CMD install -y python3 python3-pip || exit 1
         PYTHON_EXE=$(which python3)
     else
         echo Please install python3.8 or newer >&2;
@@ -70,7 +70,8 @@ if [ $? != 0 ]; then
 fi
 
 # Make sure that the python version is supported.
-PYTHON_VERSION=$($PYTHON_EXE --version | awk '{print $2}')
+# (NOTE: PYTHON_VERSION must be major version only for later package installs: 3.9, 3.11, etc)
+PYTHON_VERSION=$($PYTHON_EXE --version | awk '{print $2}' | sed 's/\([0-9]*\.[0-9]*\).*/\1/')
 $PYTHON_EXE -c 'import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)'
 if [ $? != 0 ]; then
     echo "Python version $PYTHON_VERSION is not supported. Please install python3.8 or newer" >&2
@@ -80,9 +81,9 @@ fi
 $PYTHON_EXE -m pip 2>&1 1> /dev/null
 if [ $? != 0 ]; then
     if [ $INSTALL_PIP == 1 ]; then
-        $INSTALL_CMD install -y ${PYTHON_VERSION}-pip || exit 1
+        $INSTALL_CMD install -y python${PYTHON_VERSION}-pip || exit 1
     else
-        echo Please install ${PYTHON_VERSION}-pip >&2;
+        echo Please install python${PYTHON_VERSION}-pip >&2;
         exit 1
     fi
 fi
