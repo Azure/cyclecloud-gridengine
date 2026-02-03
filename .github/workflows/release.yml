@@ -39,6 +39,7 @@ jobs:
           tag_name: ${{ github.ref }}
           release_name: Release ${{ github.ref }}
           draft: false
+          token: ${{ secrets.ACTION_PAT }}
           prerelease: true
       - name: Upload Release Asset
         id: upload-release-asset 
