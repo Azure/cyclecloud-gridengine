@@ -513,7 +513,7 @@ Order = 20
 
         [[[parameter UsePublicNetwork]]]
         Label = Public Head Node
-        DefaultValue = true
+        DefaultValue = false
         ParameterType = Boolean
         Config.Label = Access scheduler node from the Internet
 
@@ -559,3 +559,4 @@ Order = 20
         DefaultValue = false
         Widget.Plugin = pico.form.BooleanCheckBox
         Widget.Label = Run Node Health Checks on startup
+
