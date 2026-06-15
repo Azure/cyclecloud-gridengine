@@ -642,15 +642,16 @@ license_oversubscription NONE"""
         if not node.resources.get("ccnodeid"):
             return
 
-        tempp = tempfile.mktemp()
+        tempp = None
         try:
             host_template = self.get_host_template(node)
+            fd, tempp = tempfile.mkstemp()
             logging.getLogger("gridengine.driver").info(
                 "host template contents written to %s", tempp
             )
             logging.getLogger("gridengine.driver").info(host_template)
 
-            with open(tempp, "w") as tempf:
+            with open(fd, "w") as tempf:
                 tempf.write(host_template)
             try:
                 self.ge_env.qbin.qconf(["-Ae", tempp])
@@ -660,7 +661,7 @@ license_oversubscription NONE"""
                 else:
                     raise
         finally:
-            if os.path.exists(tempp):
+            if tempp and os.path.exists(tempp):
                 try:
                     os.remove(tempp)
                 except Exception:
