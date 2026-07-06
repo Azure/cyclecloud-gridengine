@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+set -e
 CLUSTER_NAME=
 USERNAME=
 PASSWORD=
@@ -65,7 +65,14 @@ done
 
 if [ -z "$CLUSTER_NAME" ]; then helpmsg; fi
 if [ -z "$USERNAME" ]; then helpmsg; fi
-if [ -z "$PASSWORD" ]; then helpmsg; fi
+# This script has sensitive data, so it should be run with set -x disabled.
+set +x
+if [ "$PASSWORD" == "" ]; then
+    which jetpack > /dev/null 2>&1 || (echo "Please specify --password or ensure jetpack is in the path" && helpmsg)
+    PASSWORD=$(jetpack config cyclecloud.config.password)
+fi
+set -x
+
 if [ -z "$CC_URL" ]; then helpmsg; fi
 
 if [ ! -e $INSTALLDIR ]; then
@@ -132,7 +139,7 @@ for c in $( echo $RELEVANT_COMPLEXES | tr , " " ); do
     fi
 done
 
-
+set +x
 azge initconfig --cluster-name $CLUSTER_NAME \
                 --username     $USERNAME \
                 --password     $PASSWORD \
@@ -149,3 +156,4 @@ azge initconfig --cluster-name $CLUSTER_NAME \
                 $disable_pgs_for_pe \
                 --idle-timeout $IDLE_TIMEOUT \
                 --relevant-complexes $relevant_complexes_validated > ${OUTPUT_PATH:-$INSTALLDIR/autoscale.json}
+set -x
