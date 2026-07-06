@@ -133,6 +133,14 @@ for c in $( echo $RELEVANT_COMPLEXES | tr , " " ); do
 done
 
 
+autoscale_json=${OUTPUT_PATH:-$INSTALLDIR/autoscale.json}
+
+# The output contains credentials, so create it with restrictive permissions
+# before any content is written to it.
+umask 077
+touch "$autoscale_json"
+chmod 0600 "$autoscale_json"
+
 azge initconfig --cluster-name $CLUSTER_NAME \
                 --username     $USERNAME \
                 --password     $PASSWORD \
@@ -148,4 +156,4 @@ azge initconfig --cluster-name $CLUSTER_NAME \
                 $hostgroup_constraints \
                 $disable_pgs_for_pe \
                 --idle-timeout $IDLE_TIMEOUT \
-                --relevant-complexes $relevant_complexes_validated > ${OUTPUT_PATH:-$INSTALLDIR/autoscale.json}
+                --relevant-complexes $relevant_complexes_validated > "$autoscale_json"
