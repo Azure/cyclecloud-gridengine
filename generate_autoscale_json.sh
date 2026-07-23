@@ -139,7 +139,15 @@ for c in $( echo $RELEVANT_COMPLEXES | tr , " " ); do
     fi
 done
 
+
+temp_autoscale=.autoscale.json.$(date +%s)
+function cleanup() {
+    rm -f $temp_autoscale
+}
+trap cleanup EXIT
+
 set +x
+
 azge initconfig --cluster-name $CLUSTER_NAME \
                 --username     $USERNAME \
                 --password     $PASSWORD \
@@ -155,5 +163,6 @@ azge initconfig --cluster-name $CLUSTER_NAME \
                 $hostgroup_constraints \
                 $disable_pgs_for_pe \
                 --idle-timeout $IDLE_TIMEOUT \
-                --relevant-complexes $relevant_complexes_validated > ${OUTPUT_PATH:-$INSTALLDIR/autoscale.json}
+                --relevant-complexes $relevant_complexes_validated > $temp_autoscale
+install -m 600 -o cyclecloud -g cyclecloud $temp_autoscale ${OUTPUT_PATH:-$INSTALLDIR/autoscale.json}
 set -x
