@@ -522,7 +522,6 @@ bash 'setup cyclecloud-gridengine' do
   ./install.sh --install-python3 --venv $INSTALLDIR/venv
   ./generate_autoscale_json.sh --cluster-name #{node[:cyclecloud][:cluster][:name]} \
                                --username     #{node[:cyclecloud][:config][:username]} \
-                               --password     #{node[:cyclecloud][:config][:password]} \
                                --url          #{node[:cyclecloud][:config][:web_server]} \
                                --relevant-complexes #{relevant_complexes_str} \
                                --idle-timeout #{node[:gridengine][:idle_timeout]}
