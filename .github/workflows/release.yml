@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@0717577d45739eb3c851188b29f50ed6c0b2194e # v2.8.0
       - name: Build pkg
         run:
           sudo apt update || apt update;
@@ -32,7 +32,7 @@ jobs:
           curl -L -k -o dist/sge-2011.11-common.tgz https://github.com/Azure/cyclecloud-gridengine/releases/download/1.0.0/sge-2011.11-common.tgz;
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
+        uses: actions/create-release@0cb9c9b65d5d1901c1f53e5e66eaf4afd303e70e # v1.1.4
         env:
           GITHUB_TOKEN: ${{ secrets.ACTION_PAT }}
         with:
@@ -43,7 +43,7 @@ jobs:
           prerelease: true
       - name: Upload Release Asset
         id: upload-release-asset 
-        uses: actions/upload-release-asset@v1
+        uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5 # v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.ACTION_PAT }}
         with:
@@ -53,7 +53,7 @@ jobs:
           asset_content_type: application/gzip
       - name: Upload SGE Binary
         id: upload-sge-binary
-        uses: actions/upload-release-asset@v1
+        uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5 # v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.ACTION_PAT }}
         with:
@@ -63,7 +63,7 @@ jobs:
           asset_content_type: application/gzip
       - name: Upload SGE Common
         id: upload-sge-common
-        uses: actions/upload-release-asset@v1
+        uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5 # v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.ACTION_PAT }}
         with:
