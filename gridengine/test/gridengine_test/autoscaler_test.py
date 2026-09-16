@@ -359,11 +359,6 @@ def test_overalocation_bug() -> None:
 
 
 def mock_config(bindings: MockClusterBinding) -> Dict:
-    logging_config = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "conf", "logging.conf")
-    )
-    assert os.path.exists(logging_config), logging_config
-
     pgs = []
     for prefix in ["rr", "fp", "fu"]:
         for i in range(3):
@@ -372,7 +367,23 @@ def mock_config(bindings: MockClusterBinding) -> Dict:
     return {
         "_mock_bindings": bindings,
         "lock_file": None,
-        "logging": {"config_file": logging_config},
+        "logging": {
+            "config": {
+                "version": 1,
+                "disable_existing_loggers": False,
+                "formatters": {
+                    "simple": {"format": "%(asctime)s %(levelname)s: %(message)s"}
+                },
+                "handlers": {
+                    "console": {
+                        "class": "logging.StreamHandler",
+                        "stream": "ext://sys.stderr",
+                        "formatter": "simple",
+                    }
+                },
+                "root": {"level": "DEBUG", "handlers": ["console"]},
+            }
+        },
         "default_resources": [
             {"name": "slots", "select": {}, "value": "node.vcpu_count"},
             {"name": "m_mem_free", "select": {}, "value": "node.resources.memgb"},
