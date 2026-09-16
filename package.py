@@ -6,12 +6,76 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import zipfile
 from argparse import Namespace
-from subprocess import check_call
+from email.parser import BytesParser
+from subprocess import PIPE, Popen, check_call
 from typing import List, Optional
 
-SCALELIB_VERSION = "0.1.8"
-CYCLECLOUD_API_VERSION = "8.0.1"
+SCALELIB_VERSION = "1.0.12"
+CYCLECLOUD_API_VERSION = "8.9.3"
+CYCLECLOUD_DEB_VERSION = "8.9.3-3874"
+
+
+def download_cyclecloud_api(destination: str) -> None:
+    if not shutil.which("dpkg-deb"):
+        raise RuntimeError("dpkg-deb is required; install dpkg or use --cyclecloud-api.")
+
+    wheel_name = "cyclecloud_api-{}-py2.py3-none-any.whl".format(CYCLECLOUD_API_VERSION)
+    deb_name = "cyclecloud8_{}_amd64.deb".format(CYCLECLOUD_DEB_VERSION)
+    url = (
+        "https://packages.microsoft.com/repos/cyclecloud/pool/main/c/cyclecloud8/"
+        + deb_name
+    )
+    with tempfile.TemporaryDirectory(
+        dir=os.path.dirname(os.path.abspath(destination))
+    ) as work_dir:
+        deb_path = os.path.join(work_dir, deb_name)
+        wheel_path = os.path.join(work_dir, wheel_name)
+        check_call(
+            [
+                "curl", "--fail", "--location", "--silent", "--show-error",
+                "--output", deb_path, url,
+            ]
+        )
+        matches = 0
+        with Popen(["dpkg-deb", "--fsys-tarfile", deb_path], stdout=PIPE) as process:
+            try:
+                with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                    for member in archive:
+                        if os.path.basename(member.name) != wheel_name:
+                            continue
+                        if not member.isfile():
+                            raise RuntimeError("Bundled API wheel must be a regular file.")
+                        matches += 1
+                        if matches > 1:
+                            raise RuntimeError("Multiple matching API wheels in CycleCloud DEB.")
+                        with archive.extractfile(member) as source:
+                            with open(wheel_path, "wb") as target:
+                                shutil.copyfileobj(source, target)
+                while process.stdout.read(1024 * 1024):
+                    pass
+                if process.wait() != 0:
+                    raise RuntimeError("Could not read CycleCloud DEB contents.")
+            except BaseException:
+                process.kill()
+                raise
+        if matches != 1:
+            raise RuntimeError("CycleCloud DEB does not contain " + wheel_name)
+        with zipfile.ZipFile(wheel_path) as wheel:
+            metadata_files = [
+                name for name in wheel.namelist()
+                if name.endswith(".dist-info/METADATA")
+            ]
+            if len(metadata_files) != 1:
+                raise RuntimeError("Expected one API wheel metadata file.")
+            metadata = BytesParser().parsebytes(wheel.read(metadata_files[0]))
+            if (
+                metadata["Name"] not in ("cyclecloud-api", "cyclecloud_api")
+                or metadata["Version"] != CYCLECLOUD_API_VERSION
+            ):
+                raise RuntimeError("Bundled API wheel metadata does not match the requested version.")
+        os.replace(wheel_path, destination)
 
 
 def build_sdist() -> str:
@@ -45,10 +109,9 @@ def get_cycle_libs(args: Namespace) -> List[str]:
     scalelib_url = "https://github.com/Azure/cyclecloud-scalelib/archive/{}.tar.gz".format(
         SCALELIB_VERSION
     )
-    cyclecloud_api_url = "https://github.com/Azure/cyclecloud-gridengine/releases/download/2.0.0/cyclecloud_api-8.0.1-py2.py3-none-any.whl"
     to_download = {
         scalelib_file: (args.scalelib, scalelib_url),
-        cyclecloud_api_file: (args.cyclecloud_api, cyclecloud_api_url),
+        cyclecloud_api_file: (args.cyclecloud_api, None),
     }
 
     for lib_file in to_download:
@@ -65,7 +128,10 @@ def get_cycle_libs(args: Namespace) -> List[str]:
             ret.append(fname)
         else:
             dest = os.path.join("libs", lib_file)
-            check_call(["curl", "-L", "-k", "-s", "-o", dest, url])
+            if lib_file == cyclecloud_api_file:
+                download_cyclecloud_api(dest)
+            else:
+                check_call(["curl", "-L", "-k", "-s", "-o", dest, url])
             ret.append(lib_file)
             print("Downloaded", lib_file, "to")
 
@@ -81,9 +147,12 @@ def execute() -> None:
 
     argument_parser = argparse.ArgumentParser(
         "Builds CycleCloud GridEngine project with all dependencies.\n"
-        + "If you don't specify local copies of scalelib or cyclecloud-api they will be downloaded from github."
+        + "Scalelib is downloaded from GitHub; cyclecloud-api is extracted from the official CycleCloud DEB (requires dpkg-deb)."
     )
-    argument_parser.add_argument("--scalelib", default=None)
+    argument_parser.add_argument(
+        "--scalelib", default=os.environ.get("CYCLECLOUD_SCALELIB"),
+        help="Local scalelib archive (defaults to CYCLECLOUD_SCALELIB).",
+    )
     argument_parser.add_argument("--cyclecloud-api", default=None)
     args = argument_parser.parse_args()
 
@@ -132,8 +201,8 @@ def execute() -> None:
         if fil.startswith("certifi-2019"):
             print("WARNING: Ignoring duplicate certifi {}".format(fil))
             continue
-        if "charset_normalizer" in fil:
-            print("WARNING: removing charset_normalizer")
+        if "charset_normalizer" in fil or fil.lower().startswith("pyyaml-"):
+            print("WARNING: removing {}".format(fil))
             continue
         path = os.path.join(build_dir, fil)
         _add("packages/" + fil, path)

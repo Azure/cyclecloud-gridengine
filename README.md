@@ -24,6 +24,41 @@ cd cyclecloud-gridengine
 ./generate_autoscale_json.sh --username USER --password PASS --cluster-name CLUSTER --url https://cyclecloud-address:port
 ```
 
+### Building the Bundle
+
+To build the release artifacts locally with Docker:
+
+```bash
+./docker-package.sh
+```
+
+To use a local scalelib archive instead of downloading it:
+
+```bash
+./docker-package.sh --scalelib ../cyclecloud-scalelib/dist/cyclecloud-scalelib-1.0.12.tar.gz
+```
+
+
+Run `python package.py` from the project checkout. The packager downloads scalelib
+`1.0.12` from GitHub and extracts API wheel `8.9.3` from the official Microsoft
+CycleCloud DEB `8.9.3-3874`. This requires `curl` and `dpkg-deb` (provided by `dpkg`
+on Debian/Ubuntu). The DEB is not installed: only the matching regular wheel file
+is extracted, and its package name and version are checked before use. Temporary
+download and extraction files are removed on success or failure. Allow roughly
+500 MB of temporary disk space for the DEB download, in addition to build outputs.
+
+Supply local dependencies to bypass their downloads:
+
+```bash
+python package.py --scalelib /path/to/cyclecloud-scalelib-1.0.12.tar.gz \
+  --cyclecloud-api /path/to/cyclecloud_api-8.9.3-py2.py3-none-any.whl
+```
+
+The `--cyclecloud-api` override does not require `dpkg-deb`. Other Python package
+dependencies may still be downloaded during the build. When updating the API
+version, also update `CYCLECLOUD_DEB_VERSION` in `package.py` to a corresponding
+official package build.
+
 ### Important Files
 
 The application parses the sge configuration each time it's called - jobs, queues, complexes.
