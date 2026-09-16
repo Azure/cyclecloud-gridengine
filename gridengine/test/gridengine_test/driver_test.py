@@ -262,7 +262,10 @@ def test_initialize() -> None:
     ge_env.qbin.qconf = FakeQConf()
     ge_driver = GridEngineDriver({}, ge_env)
     with mock.patch.object(
-        type(ge_env.qbin), "version", new_callable=mock.PropertyMock, return_value="8.6.2"
+        type(ge_env.qbin),
+        "version",
+        new_callable=mock.PropertyMock,
+        return_value="8.6.2",
     ):
         ge_driver.initialize_environment()
     assert ge_env.qbin.qconf.call_count == 4
