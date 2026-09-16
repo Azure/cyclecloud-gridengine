@@ -1,4 +1,3 @@
-import os
 from typing import Callable, Dict, List, Optional
 
 from hpc.autoscale import hpclogging
