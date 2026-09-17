@@ -56,7 +56,7 @@ tar -C "$source_dir" --exclude=.git --exclude=.venv --exclude=.testvenv --exclud
       cd /work
       export DEBIAN_FRONTEND=noninteractive
       apt-get update
-      apt-get install -y python3 python3-yaml curl ca-certificates sudo dpkg
+      apt-get install -y python3 python3-yaml curl ca-certificates sudo
       python3 util/local_release.py
       chown "$1:$2" /output/*
     ' -- "$(id -u)" "$(id -g)"

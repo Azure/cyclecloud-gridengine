@@ -40,12 +40,10 @@ To use a local scalelib archive instead of downloading it:
 
 
 Run `python package.py` from the project checkout. The packager downloads scalelib
-`1.0.12` from GitHub and extracts API wheel `8.9.3` from the official Microsoft
-CycleCloud DEB `8.9.3-3874`. This requires `curl` and `dpkg-deb` (provided by `dpkg`
-on Debian/Ubuntu). The DEB is not installed: only the matching regular wheel file
-is extracted, and its package name and version are checked before use. Temporary
-download and extraction files are removed on success or failure. Allow roughly
-500 MB of temporary disk space for the DEB download, in addition to build outputs.
+`1.0.12` from GitHub and discovers the API wheel published with that scalelib
+release using the GitHub releases API. There must be exactly one API wheel asset;
+its package name and version are checked before use. This requires `curl`. Temporary download files
+are removed on success or failure.
 
 Supply local dependencies to bypass their downloads:
 
@@ -54,10 +52,11 @@ python package.py --scalelib /path/to/cyclecloud-scalelib-1.0.12.tar.gz \
   --cyclecloud-api /path/to/cyclecloud_api-8.9.3-py2.py3-none-any.whl
 ```
 
-The `--cyclecloud-api` override does not require `dpkg-deb`. Other Python package
-dependencies may still be downloaded during the build. When updating the API
-version, also update `CYCLECLOUD_DEB_VERSION` in `package.py` to a corresponding
-official package build.
+The `--cyclecloud-api` override bypasses release discovery and wheel download.
+Other Python package dependencies may still be downloaded during the build.
+Updating `SCALELIB_VERSION` in `package.py` also selects that release's API wheel;
+no separate API version pin is needed. A local `--scalelib` archive does not change
+the release used for API discovery; supply `--cyclecloud-api` as well when needed.
 
 ### Important Files
 
