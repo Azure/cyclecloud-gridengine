@@ -131,7 +131,7 @@ def get_cycle_libs(args: Namespace) -> List[str]:
             if lib_file == cyclecloud_api_file:
                 download_cyclecloud_api(dest)
             else:
-                check_call(["curl", "-L", "-k", "-s", "-o", dest, url])
+                check_call(["curl", "--fail", "--location", "--silent", "--show-error", "--output", dest, url])
             ret.append(lib_file)
             print("Downloaded", lib_file, "to")
 
