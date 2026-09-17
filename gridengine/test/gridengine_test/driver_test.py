@@ -247,15 +247,25 @@ def test_initialize() -> None:
             if args == ["-sss"]:
                 assert self.call_count == 1
                 return ""
-            if args == ["-sc"]:
+            if args == ["-shgrpl"]:
                 assert self.call_count == 2
                 return ""
-            elif args[0] == "-Ace":
+            if args == ["-sc"]:
                 assert self.call_count == 3
+                return ""
+            elif args[0] == "-Ace":
+                assert self.call_count == 4
                 return ""
             else:
                 raise AssertionError("Unexpected call {}".format(args))
 
     ge_env.qbin.qconf = FakeQConf()
     ge_driver = GridEngineDriver({}, ge_env)
-    ge_driver.initialize_environment()
+    with mock.patch.object(
+        type(ge_env.qbin),
+        "version",
+        new_callable=mock.PropertyMock,
+        return_value="8.6.2",
+    ):
+        ge_driver.initialize_environment()
+    assert ge_env.qbin.qconf.call_count == 4
