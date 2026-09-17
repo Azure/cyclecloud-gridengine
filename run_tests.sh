@@ -22,8 +22,5 @@ TEST_PYTHON="$PROJECT_ROOT/.testvenv/bin/python"
     "$API_WHEEL" "$SCALELIB" -e "$PROJECT_ROOT/gridengine" pytest PyYAML
 
 cd "$PROJECT_ROOT"
-TEST_PATHS=(gridengine/test)
-if [[ -d test ]]; then
-    TEST_PATHS+=(test)
-fi
+TEST_PATHS=(gridengine/test test)
 exec "$TEST_PYTHON" -m pytest "${TEST_PATHS[@]}" "$@"
