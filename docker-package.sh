@@ -44,7 +44,7 @@ if [[ -n "$scalelib" ]]; then
 fi
 
 echo "Building the release workflow's package and SGE artifacts in Docker."
-tar -C "$source_dir" --exclude=.git --exclude=.venv --exclude=venv \
+tar -C "$source_dir" --exclude=.git --exclude=.venv --exclude=.testvenv --exclude=venv \
   --exclude=__pycache__ --exclude='*.egg-info' --exclude=build --exclude=dist \
   -cf - . |
   docker run --rm -i --platform linux/amd64 \
