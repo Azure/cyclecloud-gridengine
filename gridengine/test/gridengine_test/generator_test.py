@@ -175,7 +175,7 @@ def generator(tmp_path: Path) -> Callable[..., Dict]:
             env=environment,
             capture_output=True,
             text=True,
-            umask=0o022,
+            preexec_fn=lambda: os.umask(0o022),
             timeout=30,
         )
         assert "synthetic-only" not in result.stdout + result.stderr
