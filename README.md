@@ -430,7 +430,7 @@ It is not safe to move off of the `/sched` as it's a specifically shared nfs loc
 Using the cyclecloud cli, import a cluster template from the new cluster template file.
 
 ```bash
-cyclecloud import_cluster UGE -c 'grid engine' -f gridengine.txt -t
+cyclecloud import_cluster UGE -c 'grid engine' -f templates/gridengine.txt -t
 ```
 
 Similar to this [tutorial](https://docs.microsoft.com/en-us/azure/cyclecloud/tutorials/modify-cluster-template) in the documentation, new UGE cluster type is now available in the *Create Cluster* menu in the UI.
