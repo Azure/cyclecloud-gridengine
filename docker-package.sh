@@ -61,6 +61,6 @@ tar -C "$source_dir" --exclude=.git --exclude=.venv --exclude=.testvenv --exclud
       chown "$1:$2" /output/*
     ' -- "$(id -u)" "$(id -g)"
 
-mkdir -p "$source_dir/dist"
-mv -- "$staging/output/"* "$source_dir/dist/"
-echo "Build complete: $source_dir/dist (nothing published)."
+mkdir -p "$source_dir/blobs"
+mv -- "$staging/output/"* "$source_dir/blobs/"
+echo "Build complete: $source_dir/blobs (nothing published)."
