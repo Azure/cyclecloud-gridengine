@@ -21,7 +21,13 @@ The application requires python3 with virtualenv.
 tar xzf cyclecloud-gridengine-pkg-*.tar.gz
 cd cyclecloud-gridengine
 ./install.sh
-./generate_autoscale_json.sh --username USER --password PASS --cluster-name CLUSTER --url https://cyclecloud-address:port
+./generate_autoscale_json.sh --username USER --cluster-name CLUSTER --url https://cyclecloud-address:port
+```
+
+Note that if `jetpack` is installed and configured, the password will be pulled from `jetpack config`. A user can also set `SCALELIB_PASSWORD` as an environment variable. Note that `--password` is still available to the script, though it is not recommended. A warning will be printed to stderr if it is used:
+```
+Warning: You are specifying the password on the command line. This may be insecure.
+It is recommended to use the environment variable SCALELIB_PASSWORD instead.
 ```
 
 ### Building the Bundle

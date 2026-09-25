@@ -781,7 +781,7 @@ def main(argv: Iterable[str] = None) -> None:
 
     initconfig_parser.add_argument("--cluster-name", required=True)
     initconfig_parser.add_argument("--username", required=True)
-    initconfig_parser.add_argument("--password")
+    initconfig_parser.add_argument("--password", default=os.environ.get("SCALELIB_PASSWORD"))
     initconfig_parser.add_argument("--url", required=True)
     initconfig_parser.add_argument(
         "--log-config",
