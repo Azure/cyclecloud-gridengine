@@ -39,6 +39,8 @@ Autoscale = $Autoscale
         # May be used to identify the ID in cluster-init scripts
         cluster.identities.default = $ManagedIdentity
 
+        gridengine.spooling_method = ${ifThenElse(NFSSchedType == "lustre", "classic", "berkeleydb")}
+
         [[[cluster-init cyclecloud/gridengine:default]]]
         Optional = true
 
