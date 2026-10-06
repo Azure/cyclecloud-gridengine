@@ -431,7 +431,7 @@ indentation.
 These configs will override the default gridengine version and installation location, as the cluster starts.  
 It is not safe to move off of the `/sched` as it's a specifically shared nfs location in the cluster.
 
-## Edit your cluster template and deploy a cluster
+### Edit your cluster template and deploy a cluster
 Update the grid engine template to point to your changes by running the following commands.
 
 ```bash
