@@ -431,6 +431,15 @@ indentation.
 These configs will override the default gridengine version and installation location, as the cluster starts.  
 It is not safe to move off of the `/sched` as it's a specifically shared nfs location in the cluster.
 
+## Edit your cluster template and deploy a cluster
+Update the grid engine template to point to your changes by running the following commands.
+
+```bash
+cp templates/gridengine.txt templates/gridengine-test.txt
+sed -i -e 's/\(\[*cluster-init[^]]*\)\]/\1:RELEASE_VERSION]/' -e 's/cyclecloud\/gridengine/gridengine/g' templates/gridengine-test.txt
+``` 
+Replace `RELEASE_VERSION` with the cyclecloud-gridengine release version (ex: `2.1.2`)
+
 ### Import the cluster template file
 
 Using the cyclecloud cli, import a cluster template from the new cluster template file.
