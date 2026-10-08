@@ -225,8 +225,9 @@ bash "clear old hosts" do
     [ "$HOST" = "$CURRENT_HOST" ] && continue
 
     qmod -d *@${HOST}
-    qconf -dattr hostgroup hostlist ${HOST} @allhosts
-    qconf -dattr hostgroup hostlist ${HOST} @cyclehtc
+    for HOSTGROUP in $(qconf -shgrpl); do
+      qconf -dattr hostgroup hostlist ${HOST} ${HOSTGROUP}
+    done
     qconf -purge queue slots all.q@${HOST}
     qconf -de ${HOST}
     qconf -ds ${HOST}
