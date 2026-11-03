@@ -5,6 +5,8 @@
 # The SGE Scheduler is a Scheduler and a Submitter
 #
 
+include_recipe "gridengine::sched_namespace"
+
 chefstate = node[:cyclecloud][:chefstate]
 
 directory "#{node[:cyclecloud][:bootstrap]}/gridengine"
