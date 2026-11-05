@@ -55,7 +55,7 @@ Autoscale = $Autoscale
 
         [[[configuration cyclecloud.mounts.nfs_sched]]]
         type = $NFSSchedType
-        mountpoint = /sched-main
+        mountpoint = ${ifThenElse(UseBuiltinSched, "/sched", "/sched-main")}
         export_path = ${ifThenElse(NFSSchedType == "lustre", strcat("tcp:/lustrefs", NFSSchedExportPath), NFSSchedExportPath)}
         address = ${ifThenElse(UseBuiltinSched, undefined, NFSSchedAddress)}
         options = $NFSSchedMountOptions
