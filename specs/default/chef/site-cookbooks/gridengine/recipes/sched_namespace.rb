@@ -3,7 +3,7 @@
 # Recipe:: sched_namespace
 #
 
-require "digest/sha2"
+require "shellwords"
 
 sched_mount = (node[:cyclecloud][:mounts] || {})[:nfs_sched] || {}
 external_sched_disabled = sched_mount[:disabled].to_s.downcase == "true"
@@ -14,31 +14,15 @@ if sched_mount[:mountpoint] == "/sched-main" && !external_sched_disabled
     raise "CycleCloud cluster name is missing; cannot determine the external /sched namespace"
   end
 
-  safe_cluster_name = cluster_name.gsub(/[^a-zA-Z0-9-]/, "-").downcase[0, 80]
-  cluster_name_digest = Digest::SHA256.hexdigest(cluster_name)
-  cluster_sched_root = "/sched-main/#{safe_cluster_name}-#{cluster_name_digest}"
-
-  execute "verify external scheduler filesystem" do
-    command "mountpoint -q /sched-main"
-  end
-
-  directory cluster_sched_root do
-    owner "root"
-    group "root"
-    mode "0755"
-    recursive true
-  end
-
-  directory "/sched" do
+  script_path = "/usr/local/bin/gridengine-sched-namespace"
+  cookbook_file script_path do
+    source "sbin/sched_namespace.sh"
     owner "root"
     group "root"
     mode "0755"
   end
 
-  mount "/sched" do
-    device cluster_sched_root
-    fstype "none"
-    options "bind"
-    action :mount
+  execute "configure scheduler namespace" do
+    command "#{script_path} #{Shellwords.escape(cluster_name)}"
   end
 end
