@@ -3,6 +3,8 @@
 # Recipe:: sched_namespace
 #
 
+require "digest/sha2"
+
 sched_mount = (node[:cyclecloud][:mounts] || {})[:nfs_sched] || {}
 external_sched_disabled = sched_mount[:disabled].to_s.downcase == "true"
 if sched_mount[:mountpoint] == "/sched-main" && !external_sched_disabled
@@ -12,8 +14,9 @@ if sched_mount[:mountpoint] == "/sched-main" && !external_sched_disabled
     raise "CycleCloud cluster name is missing; cannot determine the external /sched namespace"
   end
 
-  safe_cluster_name = cluster_name.gsub(/[^a-zA-Z0-9-]/, "-").downcase
-  cluster_sched_root = "/sched-main/#{safe_cluster_name}"
+  safe_cluster_name = cluster_name.gsub(/[^a-zA-Z0-9-]/, "-").downcase[0, 80]
+  cluster_name_digest = Digest::SHA256.hexdigest(cluster_name)
+  cluster_sched_root = "/sched-main/#{safe_cluster_name}-#{cluster_name_digest}"
 
   execute "verify external scheduler filesystem" do
     command "mountpoint -q /sched-main"
