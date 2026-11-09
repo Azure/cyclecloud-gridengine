@@ -223,11 +223,13 @@ bash "clear old hosts" do
   . /etc/cluster-setup.sh
   CURRENT_HOST="$(hostname -s)"
 
-  for HOST in `qconf -sel`; do
+  HOSTS="$(qconf -sel)"
+  for HOST in $HOSTS; do
     [ "${HOST%%.*}" = "$CURRENT_HOST" ] && continue
 
     qmod -d *@${HOST}
-    for HOSTGROUP in $(qconf -shgrpl); do
+    HOSTGROUPS="$(qconf -shgrpl)"
+    for HOSTGROUP in $HOSTGROUPS; do
       qconf -dattr hostgroup hostlist ${HOST} ${HOSTGROUP}
     done
     qconf -purge queue slots all.q@${HOST}
@@ -235,7 +237,8 @@ bash "clear old hosts" do
     qconf -ds ${HOST}
     qconf -dh ${HOST}
     rm -rf #{gridengineroot}/#{gridenginecell}/spool/${HOST};
-  done && touch #{chefstate}/gridengine.clear.hosts
+  done
+  touch #{chefstate}/gridengine.clear.hosts
   EOH
   creates "#{chefstate}/gridengine.clear.hosts"
   action :run
