@@ -224,7 +224,7 @@ bash "clear old hosts" do
   CURRENT_HOST="$(hostname -s)"
 
   for HOST in `qconf -sel`; do
-    [ "$HOST" = "$CURRENT_HOST" ] && continue
+    [ "${HOST%%.*}" = "$CURRENT_HOST" ] && continue
 
     qmod -d *@${HOST}
     for HOSTGROUP in $(qconf -shgrpl); do
