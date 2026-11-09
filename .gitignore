@@ -19,3 +19,4 @@ build
 **/*.db
 .env
 /.testvenv/
+blobs

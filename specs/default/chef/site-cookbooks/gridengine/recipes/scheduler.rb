@@ -5,6 +5,8 @@
 # The SGE Scheduler is a Scheduler and a Submitter
 #
 
+include_recipe "gridengine::sched_namespace"
+
 chefstate = node[:cyclecloud][:chefstate]
 
 directory "#{node[:cyclecloud][:bootstrap]}/gridengine"
@@ -201,23 +203,6 @@ end
 sge_execd_service = sge_service_names[0]
 sge_qmasterd_service = sge_service_names[1]
 
-# Remove any hosts from previous runs
-bash "clear old hosts" do
-  code <<-EOH
-  for HOST in `ls -1 #{gridengineroot}/#{gridenginecell}/spool/ | grep -v qmaster`; do
-    . /etc/cluster-setup.sh
-    qmod -d *@${HOST}
-    qconf -dattr hostgroup hostlist ${HOST} @allhosts
-    qconf -de ${HOST}
-    qconf -ds ${HOST}
-    qconf -dh ${HOST}
-    rm -rf #{gridengineroot}/#{gridenginecell}/spool/${HOST};
-  done && touch #{chefstate}/gridengine.clear.hosts
-  EOH
-  creates "#{chefstate}/gridengine.clear.hosts"
-  action :run
-end
-
 service sge_execd_service do
   action [:enable]
 end
@@ -229,6 +214,34 @@ end
 
 service sge_qmasterd_service do
   action [:enable, :start]
+end
+
+# Remove any hosts from previous runs
+bash "clear old hosts" do
+  code <<-EOH
+  set -e
+  . /etc/cluster-setup.sh
+  CURRENT_HOST="$(hostname -s)"
+
+  HOSTS="$(qconf -sel)"
+  for HOST in $HOSTS; do
+    [ "${HOST%%.*}" = "$CURRENT_HOST" ] && continue
+
+    qmod -d *@${HOST}
+    HOSTGROUPS="$(qconf -shgrpl)"
+    for HOSTGROUP in $HOSTGROUPS; do
+      qconf -dattr hostgroup hostlist ${HOST} ${HOSTGROUP}
+    done
+    qconf -purge queue slots all.q@${HOST}
+    qconf -de ${HOST}
+    qconf -ds ${HOST}
+    qconf -dh ${HOST}
+    rm -rf #{gridengineroot}/#{gridenginecell}/spool/${HOST};
+  done
+  touch #{chefstate}/gridengine.clear.hosts
+  EOH
+  creates "#{chefstate}/gridengine.clear.hosts"
+  action :run
 end
 
 execute "setglobal" do

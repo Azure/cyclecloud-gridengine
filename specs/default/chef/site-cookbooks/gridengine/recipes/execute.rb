@@ -3,6 +3,7 @@
 # Recipe:: execute
 #
 include_recipe "gridengine::_updatehostname"
+include_recipe "gridengine::sched_namespace"
 include_recipe "gridengine::sgefs" if node[:gridengine][:managed_fs]
 include_recipe "gridengine::submitter"
 
@@ -194,4 +195,3 @@ end
 service sge_execd_service do
   action [:nothing]
 end
-
