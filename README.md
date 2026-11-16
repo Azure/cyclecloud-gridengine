@@ -1,6 +1,9 @@
 # CycleCloud GridEngine Project
 
-This project contains the GridEngine [cluster template file](templates/gridengine.txt).
+This project contains cluster templates for [open-source Grid Engine](templates/gridengine.txt)
+and [Altair Grid Engine](templates/altair-grid-engine.txt).
+See [Using Altair Grid Engine in CycleCloud](#using-altair-grid-engine-in-cyclecloud)
+for setup instructions.
 The other GridEngine artifacts, such as install scripts, are contained in the
 CycleCloud product.  
 
@@ -11,7 +14,12 @@ to provide rich autoscaling and cluster configuration tools. The application wil
 automatically for clusters created via the CycleCloud UI or it can be installed on any 
 gridengine admin host on an existing cluster.
 
-### Installing or Upgrading cyclecloud-gridengine
+### Installing or Upgrading cyclecloud-gridengine on Your Own Scheduler
+
+Use these steps to install or upgrade the CycleCloud autoscaling integration for
+an existing Grid Engine scheduler that you manage. These commands do not install
+Grid Engine itself. For clusters created through the CycleCloud UI, the integration
+is deployed automatically.
 
 The cyclecloud-gridengine bundle will be available in [github](https://github.com/Azure/cyclecloud-gridengine/releases) 
 as a release artifact. Installing and upgrading will be the same process. 
@@ -32,38 +40,8 @@ It is recommended to use the environment variable SCALELIB_PASSWORD instead.
 
 ### Building the Bundle
 
-To build the release artifacts locally with Docker:
-
-```bash
-./docker-package.sh
-```
-
-To use a local scalelib archive instead of downloading it:
-
-```bash
-./docker-package.sh --scalelib ../cyclecloud-scalelib/dist/cyclecloud-scalelib-1.0.12.tar.gz
-```
-
-
-Run `python package.py` from the project checkout. The packager downloads scalelib
-`1.0.12` from GitHub and extracts API wheel `8.9.3` from the official Microsoft
-CycleCloud DEB `8.9.3-3874`. This requires `curl` and `dpkg-deb` (provided by `dpkg`
-on Debian/Ubuntu). The DEB is not installed: only the matching regular wheel file
-is extracted, and its package name and version are checked before use. Temporary
-download and extraction files are removed on success or failure. Allow roughly
-500 MB of temporary disk space for the DEB download, in addition to build outputs.
-
-Supply local dependencies to bypass their downloads:
-
-```bash
-python package.py --scalelib /path/to/cyclecloud-scalelib-1.0.12.tar.gz \
-  --cyclecloud-api /path/to/cyclecloud_api-8.9.3-py2.py3-none-any.whl
-```
-
-The `--cyclecloud-api` override does not require `dpkg-deb`. Other Python package
-dependencies may still be downloaded during the build. When updating the API
-version, also update `CYCLECLOUD_DEB_VERSION` in `package.py` to a corresponding
-official package build.
+See [BUILDING.md](BUILDING.md) for developer instructions on building the bundle,
+uploading project changes, and testing them with a custom cluster template.
 
 ### Important Files
 
@@ -352,11 +330,10 @@ from the external filesystem.
 1. Remove the scheduler node
 1. Configure cyclecloud-gridengine with _autoscale.json_ to use the new cluster
 
-## Using Univa Grid Engine in CycleCloud
+## Using Altair Grid Engine in CycleCloud
 
-CycleCloud project for GridEngine uses _sge-2011.11_ by default. You may use your own
-[Univa GridEngine](http://www.univa.com/products/) installers according to your Univa license agreement.  
-This section documents how to use Univa GridEngine with the CycleCloud GridEngine project.
+CycleCloud provides a separate cluster type for [Altair Grid Engine](https://altair.com/grid-engine).
+You may use your own Altair Grid Engine installers with an appropriate Altair license.
 
 ### Prerequisites
 
@@ -372,112 +349,43 @@ This example will use the 8.6.1-demo version, but all ge versions > 8.4.0 are su
 
 ### Copy the binaries into the cloud locker
 
-A complementary version of UGE (8.6.7-demo) is distributed with Cyclecloud. To use another version upload the
-binaries to the storage account that CycleCloud uses.
+Upload both installer archives to the storage account that CycleCloud uses.
+For example:
 
 ```bash
 
 $ azcopy cp ge-8.6.12-bin-lx-amd64.tar.gz https://<storage-account-name>.blob.core.windows.net/cyclecloud/gridengine/blobs/
 $ azcopy cp ge-8.6.12-common.tar.gz https://<storage-account-name>.blob.core.windows.net/cyclecloud/gridengine/blobs/
 ```
-### Modifying configs to the cluster template
+### Create an Altair Grid Engine cluster in the UI
 
-Make a local copy of the gridengine template and modify it to use the UGE installers
-instead of the default.
+1. In the CycleCloud UI, click **+** in the bottom-left corner to create a new cluster,
+   then select **Altair Grid Engine**.
+1. Configure the cluster name, Azure credentials, region, networking, and VM sizes.
+1. Open the **Advanced Settings** tab. Under the **Altair Grid Engine** heading,
+   enable **I'm providing the Altair installer**.
+1. Set **GridEngine Version** to match the uploaded archives, for example `8.6.12`.
+1. Set **Installation Location** to a shared directory under `/sched`, for example
+   `/sched/ge/ge-8.6.12`.
+1. Save the cluster and start it.
 
-```bash
-wget https://raw.githubusercontent.com/Azure/cyclecloud-gridengine/master/templates/gridengine.txt
-```
+### Verify the Grid Engine version
 
-In the _gridengine.txt_ file, locate the first occurrence of `[[[configuration]]]` and
-insert text such that it matches the snippet below.  This file is not sensitive to 
-indentation.
-
-> NOTE:
-> The details in the configuration, particularly version, should match the installer file name.
-
-```ini
-[[[configuration gridengine]]]
-    make = ge
-    version = 8.6.12-demo
-    root = /sched/ge/ge-8.6.12-demo
-    cell = "default"
-    sge_qmaster_port = "537"
-    sge_execd_port = "538"
-    sge_cluster_name = "grid1"
-    gid_range = "20000-20100"
-    qmaster_spool_dir = "/sched/ge/ge-8.6.12-demo/default/spool/qmaster" 
-    execd_spool_dir = "/sched/ge/ge-8.6.12-demo/default/spool"
-    spooling_method = "berkeleydb"
-    shadow_host = ""
-    admin_mail = ""
-    idle_timeout = 300
-
-    managed_fs = true
-    shared.bin = true
-
-    ignore_fqdn = true
-    group.name = "sgeadmin"
-    group.gid = 536
-    user.name = "sgeadmin"
-    user.uid = 536
-    user.gid = 536
-    user.description = "SGE admin user"
-    user.home = "/shared/home/sgeadmin"
-    user.shell = "/bin/bash"
-
-```
-
-These configs will override the default gridengine version and installation location, as the cluster starts.  
-It is not safe to move off of the `/sched` as it's a specifically shared nfs location in the cluster.
-
-### Edit your cluster template
-Update the grid engine template to point to your changes by running the following commands.
+Once the `scheduler` node is _Started_, connect to it (replace `test-altair` with
+your cluster name):
 
 ```bash
-cp templates/gridengine.txt templates/gridengine-test.txt
-sed -i -e 's/\(\[*cluster-init[^]]*\)\]/\1:RELEASE_VERSION]/' -e 's/cyclecloud\/gridengine/gridengine/g' templates/gridengine-test.txt
-``` 
-Replace `RELEASE_VERSION` with the cyclecloud-gridengine release version (ex: `2.1.2`)
-
-### Import the cluster template file
-
-Using the cyclecloud cli, import a cluster template from the new cluster template file.
-
-```bash
-cyclecloud import_cluster UGE -c 'grid engine' -f templates/gridengine-test.txt -t
+cyclecloud connect scheduler -c test-altair
 ```
 
-Similar to this [tutorial](https://docs.microsoft.com/en-us/azure/cyclecloud/tutorials/modify-cluster-template) in the documentation, new UGE cluster type is now available in the *Create Cluster* menu in the UI.
-
-Configure and create the cluster in the UI, save it, and start it.
-
-### Verify GridEngine version
-
-As an example, the cluster that has been configured and started is called "test-uge".
-When the master node reaches the _Started_ state (green), log into the node with 
-the `cyclecloud connect` command.
-
-```bash
-cyclecloud connect master -c test-uge`
-Last login: Tue Jan 29 20:37:14 2019 
-
- __        __  |    ___       __  |    __         __|
-(___ (__| (___ |_, (__/_     (___ |_, (__) (__(_ (__|
-        |
-
-Cluster: test-uge
-Version: 7.6.2
-```
-
-Then check the grid engine version with `qstat`
-
+In a shell with the Grid Engine environment loaded, run:
 
 ```bash
 qstat -h
-UGE 8.6.1
-usage: qstat [options]
 ```
+
+Confirm that the reported version matches the version selected when creating
+the cluster.
 
 
 # Contributing
