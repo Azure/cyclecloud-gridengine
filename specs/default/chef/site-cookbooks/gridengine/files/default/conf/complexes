@@ -5,6 +5,7 @@ affinity_group_cores affinity_group_cores  INT         ==      YES         NO   
 arch                a            RESTRING    ==      YES         NO         NONE     0
 average_runtime     avg          INT         <=      YES         NO         0        0
 calendar            c            RESTRING    ==      YES         NO         NONE     0
+ccnodeid            ccnodeid     RESTRING    ==      YES         NO         NONE     0
 cpu                 cpu          DOUBLE      >=      YES         NO         0        0
 d_rt                d_rt         TIME        <=      YES         NO         0:0:0    0
 display_win_gui     dwg          BOOL        ==      YES         NO         0        0
