@@ -365,7 +365,7 @@ $ azcopy cp ge-8.6.12-common.tar.gz https://<storage-account-name>.blob.core.win
 1. Open the **Advanced Settings** tab. Under the **Altair Grid Engine** heading,
    enable **I'm providing the Altair installer**.
 1. Set **GridEngine Version** to match the uploaded archives, for example `8.6.12`.
-1. Set **Installation Location** to a shared directory under `/sched`, for example
+1. Set **Installation Location** to match the version of the uploaded archives, for example
    `/sched/ge/ge-8.6.12`.
 1. Save the cluster and start it.
 
